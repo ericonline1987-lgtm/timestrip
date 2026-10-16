@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test
+
+      - name: Build TimeStrip.app (universal)
+        run: scripts/bundle-macos.sh --universal
+
+      - name: Zip
+        run: ditto -c -k --keepParent target/bundle/TimeStrip.app TimeStrip-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TimeStrip-macos
+          path: TimeStrip-macos.zip
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" TimeStrip-macos.zip --generate-notes
