@@ -245,7 +245,7 @@ impl PanelApp {
                     });
                 })
                 .response;
-            let id = ui.id().with(("clock-row", r));
+            let id = egui::Id::new(("clock-row", r));
             if ui.interact(resp.rect, id, Sense::click()).on_hover_text("Show this region's calendar").clicked() {
                 clicked = Some(r);
             }

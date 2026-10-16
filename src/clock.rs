@@ -173,7 +173,6 @@ pub fn copy_line(now: DateTime<Utc>, zone: &Zone, c: &Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone as _;
 
     fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()

@@ -270,7 +270,11 @@ impl App {
             match self.renderer.render(&segments, c, auto) {
                 Some(img) => {
                     let icon = Icon::from_rgba(img.rgba, img.width, img.height).ok();
-                    let _ = self.tray.set_icon_with_as_template(icon, img.template);
+                    let _ = if img.template {
+                        self.tray.set_icon_templated(icon)
+                    } else {
+                        self.tray.set_icon(icon)
+                    };
                     self.tray.set_title(None::<&str>);
                 }
                 None => {

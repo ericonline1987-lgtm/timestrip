@@ -203,7 +203,8 @@ impl SettingsApp {
                     if ui.add_enabled(i + 1 < count, egui::Button::new("▼").small()).clicked() {
                         action = Some(Action::Down(i));
                     }
-                    ui.add(egui::TextEdit::singleline(&mut z.label).hint_text(z.city()).desired_width(90.0));
+                    let city = z.city();
+                    ui.add(egui::TextEdit::singleline(&mut z.label).hint_text(city).desired_width(90.0));
                     ui.vertical(|ui| {
                         ui.label(z.city());
                         ui.label(hint(z.tz.clone()));
@@ -306,11 +307,8 @@ impl SettingsApp {
             );
         });
         font_combo(ui, "Family", "font-family", &mut c.font_family, &self.families, &self.font_query);
-        ui.add(
-            egui::Slider::new(&mut c.font_weight, 100..=900)
-                .step_by(100.0)
-                .text(format!("Weight ({})", weight_name(c.font_weight))),
-        );
+        let weight_label = format!("Weight ({})", weight_name(c.font_weight));
+        ui.add(egui::Slider::new(&mut c.font_weight, 100..=900).step_by(100.0).text(weight_label));
         ui.checkbox(&mut c.tabular_digits, "Fixed-width digits (stops the clock from jiggling)");
 
         ui.add_space(10.0);
@@ -510,7 +508,7 @@ impl SettingsApp {
     }
 }
 
-fn font_combo(ui: &mut egui::Ui, label: &str, id: impl std::hash::Hash, value: &mut String, families: &[String], filter: &str) {
+fn font_combo(ui: &mut egui::Ui, label: &str, id: impl std::hash::Hash + std::fmt::Debug, value: &mut String, families: &[String], filter: &str) {
     let fq = filter.trim().to_lowercase();
     let current = if value.is_empty() { "System font".to_string() } else { value.clone() };
     egui::ComboBox::new(id, label).selected_text(current).height(320.0).show_ui(ui, |ui| {
@@ -521,7 +519,7 @@ fn font_combo(ui: &mut egui::Ui, label: &str, id: impl std::hash::Hash, value: &
     });
 }
 
-fn date_format_ui(ui: &mut egui::Ui, id: impl std::hash::Hash, format: &mut String) {
+fn date_format_ui(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, format: &mut String) {
     let now = Utc::now();
     let local = clock::local_tz();
     egui::ComboBox::new(id, "Date format")
