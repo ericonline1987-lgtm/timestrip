@@ -13,6 +13,11 @@ pub fn local_tz() -> Tz {
         .unwrap_or(Tz::UTC)
 }
 
+/// "Los Angeles" for America/Los_Angeles.
+pub fn city_name_of(tz: Tz) -> String {
+    crate::config::city_name(tz.name())
+}
+
 pub fn parse_tz(name: &str) -> Tz {
     name.parse::<Tz>().unwrap_or(Tz::UTC)
 }
@@ -95,12 +100,23 @@ pub fn offset_string(now: DateTime<Utc>, tz: Tz, local: Tz) -> String {
     if m == 0 { format!("{sign}{h}h") } else { format!("{sign}{h}h {m}m") }
 }
 
+/// How one clock is drawn in the menu bar (global settings + that region's overrides).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SegmentStyle {
+    pub font_family: String,
+    pub font_weight: u16,
+    pub font_size: f32,
+    /// `None` = automatic (follows the light/dark menu bar).
+    pub color: Option<[u8; 3]>,
+}
+
 /// One clock as it appears in the menu bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment {
     pub label: Option<String>,
     pub time: String,
     pub date: Option<String>,
+    pub style: SegmentStyle,
 }
 
 pub fn segments(now: DateTime<Utc>, local: Tz, c: &Config) -> Vec<Segment> {
@@ -109,10 +125,17 @@ pub fn segments(now: DateTime<Utc>, local: Tz, c: &Config) -> Vec<Segment> {
         .filter(|z| z.show_in_bar)
         .map(|z| {
             let tz = parse_tz(&z.tz);
+            let e = c.for_zone(z);
             Segment {
-                label: c.show_labels.then(|| z.display_name()),
-                time: time_string(now, tz, c),
-                date: bar_date(now, tz, local, c),
+                label: e.show_labels.then(|| z.display_name()),
+                time: time_string(now, tz, &e),
+                date: bar_date(now, tz, local, &e),
+                style: SegmentStyle {
+                    font_family: e.font_family.clone(),
+                    font_weight: e.font_weight,
+                    font_size: e.font_size,
+                    color: e.use_custom_color.then_some(e.color),
+                },
             }
         })
         .collect()
@@ -121,7 +144,7 @@ pub fn segments(now: DateTime<Utc>, local: Tz, c: &Config) -> Vec<Segment> {
 /// One line for the dropdown menu, e.g. "TYO  9:35 AM · Fri Oct 16 · +16h".
 pub fn menu_line(now: DateTime<Utc>, local: Tz, zone: &Zone, c: &Config) -> String {
     let tz = parse_tz(&zone.tz);
-    let mut parts = vec![time_string(now, tz, c)];
+    let mut parts = vec![time_string(now, tz, &c.for_zone(zone))];
     if c.menu_show_dates {
         parts.push(date_string(now, tz, "%a %b %-d"));
     }
@@ -142,7 +165,7 @@ pub fn copy_line(now: DateTime<Utc>, zone: &Zone, c: &Config) -> String {
     format!(
         "{}: {}, {}",
         zone.display_name(),
-        time_string(now, tz, c),
+        time_string(now, tz, &c.for_zone(zone)),
         date_string(now, tz, "%a %b %-d")
     )
 }

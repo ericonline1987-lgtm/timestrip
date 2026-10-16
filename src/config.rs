@@ -7,6 +7,29 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Per-region overrides. Anything left as `None` uses the global setting.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ZoneStyle {
+    pub font_size: Option<f32>,
+    pub font_family: Option<String>,
+    pub font_weight: Option<u16>,
+    pub color: Option<[u8; 3]>,
+    pub show_label: Option<bool>,
+    pub use_24h: Option<bool>,
+    pub show_seconds: Option<bool>,
+    pub show_ampm: Option<bool>,
+    pub custom_time_format: Option<String>,
+    pub date_mode: Option<DateMode>,
+    pub date_format: Option<String>,
+}
+
+impl ZoneStyle {
+    pub fn is_empty(&self) -> bool {
+        *self == ZoneStyle::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Zone {
@@ -14,19 +37,21 @@ pub struct Zone {
     pub tz: String,
     /// Your own short label, e.g. "TYO". Empty = city name.
     pub label: String,
-    /// Show in the menu bar (otherwise only in the dropdown menu).
+    /// Show in the menu bar (otherwise only in the panel and dropdown menu).
     pub show_in_bar: bool,
+    /// Display settings for this region only.
+    pub style: ZoneStyle,
 }
 
 impl Default for Zone {
     fn default() -> Self {
-        Zone { tz: "UTC".into(), label: String::new(), show_in_bar: true }
+        Zone { tz: "UTC".into(), label: String::new(), show_in_bar: true, style: ZoneStyle::default() }
     }
 }
 
 impl Zone {
     pub fn new(tz: &str, label: &str) -> Self {
-        Zone { tz: tz.into(), label: label.into(), show_in_bar: true }
+        Zone { tz: tz.into(), label: label.into(), ..Zone::default() }
     }
 
     pub fn city(&self) -> String {
@@ -60,12 +85,92 @@ pub enum DateMode {
     Always,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClickAction {
+    /// Clock + calendar panel (right-click shows the menu).
+    Panel,
+    /// The dropdown menu.
+    Menu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventRegions {
+    /// Show each event's time in every region.
+    All,
+    /// Only in the regions pinned to the menu bar.
+    MenuBar,
+    /// Only in the region the calendar is showing.
+    Selected,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarConfig {
+    /// 0 = Sunday, 1 = Monday, … 6 = Saturday.
+    pub first_weekday: u8,
+    pub show_week_numbers: bool,
+    pub highlight_weekends: bool,
+    pub show_adjacent_months: bool,
+    /// Region the calendar opens on: an IANA name, or empty for your own time zone.
+    pub default_region: String,
+    /// Read events from the macOS Calendar app.
+    pub show_events: bool,
+    /// Calendar identifiers you've turned off.
+    pub hidden_calendars: Vec<String>,
+    pub event_regions: EventRegions,
+    /// Days of upcoming events listed under the month (0 = only the selected day).
+    pub upcoming_days: u32,
+}
+
+impl Default for CalendarConfig {
+    fn default() -> Self {
+        CalendarConfig {
+            first_weekday: 0,
+            show_week_numbers: false,
+            highlight_weekends: true,
+            show_adjacent_months: true,
+            default_region: String::new(),
+            show_events: true,
+            hidden_calendars: Vec::new(),
+            event_regions: EventRegions::All,
+            upcoming_days: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PanelConfig {
+    pub left_click: ClickAction,
+    /// Overall size of the panel (1.0 = normal).
+    pub zoom: f32,
+    pub width: f32,
+    pub show_clocks: bool,
+    pub show_time_slider: bool,
+    pub show_calendar: bool,
+}
+
+impl Default for PanelConfig {
+    fn default() -> Self {
+        PanelConfig {
+            left_click: ClickAction::Panel,
+            zoom: 1.0,
+            width: 360.0,
+            show_clocks: true,
+            show_time_slider: true,
+            show_calendar: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub zones: Vec<Zone>,
 
-    // ---- Menu bar appearance ----
+    // ---- Menu bar appearance (defaults for every region) ----
     pub layout: Layout,
     /// Font family name; empty = the system font.
     pub font_family: String,
@@ -93,7 +198,7 @@ pub struct Config {
     /// sRGB color used when `use_custom_color` is on.
     pub color: [u8; 3],
 
-    // ---- Time & date ----
+    // ---- Time & date (defaults for every region) ----
     pub use_24h: bool,
     pub show_ampm: bool,
     pub lowercase_ampm: bool,
@@ -107,6 +212,10 @@ pub struct Config {
     // ---- Dropdown menu ----
     pub menu_show_offsets: bool,
     pub menu_show_dates: bool,
+
+    // ---- Panel & calendar ----
+    pub panel: PanelConfig,
+    pub calendar: CalendarConfig,
 }
 
 impl Default for Config {
@@ -141,15 +250,63 @@ impl Default for Config {
             date_format: "%a".into(),
             menu_show_offsets: true,
             menu_show_dates: true,
+            panel: PanelConfig::default(),
+            calendar: CalendarConfig::default(),
         }
     }
 }
 
 impl Config {
-    /// Default appearance, keeping the current clocks.
+    /// Default menu bar appearance, keeping clocks, per-region styles, panel and calendar settings.
     pub fn reset_appearance(&mut self) {
-        let zones = std::mem::take(&mut self.zones);
-        *self = Config { zones, ..Config::default() };
+        let keep = std::mem::take(self);
+        *self = Config {
+            zones: keep.zones,
+            panel: keep.panel,
+            calendar: keep.calendar,
+            ..Config::default()
+        };
+    }
+
+    /// The effective settings for one region: global settings with its overrides applied.
+    pub fn for_zone(&self, zone: &Zone) -> Config {
+        let s = &zone.style;
+        let mut c = self.clone();
+        if let Some(v) = s.font_size {
+            c.font_size = v;
+        }
+        if let Some(v) = &s.font_family {
+            c.font_family = v.clone();
+        }
+        if let Some(v) = s.font_weight {
+            c.font_weight = v;
+        }
+        if let Some(v) = s.color {
+            c.use_custom_color = true;
+            c.color = v;
+        }
+        if let Some(v) = s.show_label {
+            c.show_labels = v;
+        }
+        if let Some(v) = s.use_24h {
+            c.use_24h = v;
+        }
+        if let Some(v) = s.show_seconds {
+            c.show_seconds = v;
+        }
+        if let Some(v) = s.show_ampm {
+            c.show_ampm = v;
+        }
+        if let Some(v) = &s.custom_time_format {
+            c.custom_time_format = v.clone();
+        }
+        if let Some(v) = s.date_mode {
+            c.date_mode = v;
+        }
+        if let Some(v) = &s.date_format {
+            c.date_format = v.clone();
+        }
+        c.sanitized()
     }
 
     /// Clamp values to sane ranges (protects against hand-edited files).
@@ -161,6 +318,10 @@ impl Config {
         self.vertical_offset = self.vertical_offset.clamp(-10.0, 10.0);
         self.letter_spacing = self.letter_spacing.clamp(-2.0, 6.0);
         self.dim_amount = self.dim_amount.clamp(0.0, 1.0);
+        self.panel.zoom = self.panel.zoom.clamp(0.6, 2.5);
+        self.panel.width = self.panel.width.clamp(260.0, 700.0);
+        self.calendar.first_weekday %= 7;
+        self.calendar.upcoming_days = self.calendar.upcoming_days.min(31);
         self
     }
 }
@@ -187,7 +348,7 @@ pub fn save(config: &Config) -> std::io::Result<()> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir)?;
     let json = serde_json::to_string_pretty(config)?;
-    let tmp = dir.join("config.json.tmp");
+    let tmp = dir.join(format!("config.json.{}.tmp", std::process::id()));
     std::fs::write(&tmp, json)?;
     std::fs::rename(tmp, config_path())
 }
@@ -202,17 +363,33 @@ mod tests {
 
     #[test]
     fn partial_json_uses_defaults() {
-        let c: Config = serde_json::from_str(r#"{ "font_size": 18 }"#).unwrap();
+        let c: Config = serde_json::from_str(r#"{ "font_size": 18, "calendar": { "first_weekday": 1 } }"#).unwrap();
         assert_eq!(c.font_size, 18.0);
         assert_eq!(c.zones.len(), 3);
         assert_eq!(c.date_mode, DateMode::WhenDifferent);
+        assert_eq!(c.calendar.first_weekday, 1);
+        assert!(c.calendar.show_events);
     }
 
     #[test]
     fn round_trip() {
-        let c = Config::default();
+        let mut c = Config::default();
+        c.zones[0].style.font_size = Some(18.0);
         let s = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<Config>(&s).unwrap(), c);
+    }
+
+    #[test]
+    fn zone_overrides_apply() {
+        let mut c = Config::default();
+        c.zones[2].style = ZoneStyle { font_size: Some(20.0), color: Some([1, 2, 3]), use_24h: Some(true), ..Default::default() };
+        let eff = c.for_zone(&c.zones[2]);
+        assert_eq!(eff.font_size, 20.0);
+        assert!(eff.use_custom_color && eff.use_24h);
+        assert_eq!(eff.color, [1, 2, 3]);
+        let plain = c.for_zone(&c.zones[0]);
+        assert_eq!(plain.font_size, 13.0);
+        assert!(!plain.use_custom_color);
     }
 
     #[test]

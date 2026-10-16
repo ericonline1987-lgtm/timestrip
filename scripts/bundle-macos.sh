@@ -54,6 +54,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSCalendarsFullAccessUsageDescription</key><string>TimeStrip shows your calendar events in the time of each region you follow.</string>
+    <key>NSCalendarsUsageDescription</key><string>TimeStrip shows your calendar events in the time of each region you follow.</string>
 </dict>
 </plist>
 PLIST

@@ -1,7 +1,8 @@
 # TimeStrip
 
-A small macOS menu bar world clock, written in Rust. Like Clocker, but you control
-exactly how it looks: size, font, weight, layout, spacing, color and date format.
+A macOS menu bar world clock and calendar, written in Rust. Like Clocker, but you control
+exactly how every region looks and behaves: size, font, weight, color, time and date
+format, per region, plus a month calendar and your calendar events in every region's time.
 
 ```
 NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
@@ -10,24 +11,34 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 ## Features
 
 **Menu bar**
-- Any number of clocks; pick which ones appear in the bar (the rest live in the dropdown)
+- Any number of regions; pick which ones appear in the bar
 - Your own short labels (`NYC`, `Mum`, `HQ`…)
 - Text size from 8 to 40 pt, any installed font, weights from Thin to Black
 - Single-line or stacked layout (small label above a larger time)
-- Fixed-width digits so the clock doesn't jiggle
-- Spacing between clocks, letter spacing, an optional separator (`·`, `|`, `/`…)
+- Fixed-width digits, spacing between regions, letter spacing, an optional separator
 - Vertical nudge for pixel-perfect alignment
 - Dim or hide labels; custom color, or automatic light/dark
-- 12/24-hour, AM/PM (upper or lower case), seconds, or your own time format
-- Show the date never, always, or only when that clock is on a different day than you
+- 12/24-hour, AM/PM, seconds, or your own time format
+- Show the date never, always, or only when that region is on a different day than you
 
-**Dropdown menu**
-- Every clock with its date and difference from your time
-- Click a clock to copy its time; "Copy All Times" copies them all
-- Settings…, Show Config File, Open at Login, Quit
+**Per-region styles** — any region can override the defaults: its own size, font,
+weight, color, label, 24-hour, AM/PM, seconds, time format, date display and date format.
+Make your home office big and bold and the rest small and dim.
+
+**Panel** (click the clock)
+- Every region's time, date and difference from you; click one to switch the calendar to it
+- A time slider (±24 h) to see what time it will be everywhere
+- A month calendar for any region: today is marked in *that* region's date, with week
+  numbers, any first day of the week, and dimmed weekends
+- Your Calendar app events, with colored dots on busy days; each event shows its time in
+  the selected region and in your other regions (e.g. `NYC 8:00 PM · TYO 9:00 AM Fri`)
+- An upcoming-days list, and buttons for Settings and the Calendar app
+
+**Right-click menu** — every region's time, date and offset (click to copy), Copy All
+Times, Show Clocks & Calendar, Settings…, Open at Login, Quit.
 
 **Settings window** with a live preview on light and dark menu bars. Changes are saved
-instantly and the real menu bar updates within a second.
+instantly; the menu bar and panel update within a second.
 
 ## Install
 
@@ -70,14 +81,16 @@ Everything in the settings window is stored in a JSON file you can also edit by 
 {
   "zones": [
     { "tz": "America/New_York", "label": "NYC", "show_in_bar": true },
-    { "tz": "Asia/Tokyo", "label": "TYO", "show_in_bar": true }
+    { "tz": "Asia/Tokyo", "label": "TYO", "show_in_bar": true,
+      "style": { "font_size": 16, "color": [255, 159, 10], "use_24h": true } }
   ],
   "layout": "inline",
   "font_family": "Menlo",
   "font_size": 14.0,
   "font_weight": 500,
   "date_mode": "when_different",
-  "date_format": "%a"
+  "date_format": "%a",
+  "calendar": { "first_weekday": 1, "show_week_numbers": true }
 }
 ```
 
@@ -91,12 +104,19 @@ date formats use [strftime syntax](https://docs.rs/chrono/latest/chrono/format/s
   layout is the way to get bigger digits into the same space.
 - Hold ⌘ and drag the clock to move it within the menu bar.
 - "Open at Login" adds `~/Library/LaunchAgents/com.timestrip.app.plist`.
+- Calendar events are read-only. The first time you click "Show my calendar events",
+  macOS asks for permission; you can change it later in System Settings → Privacy &
+  Security → Calendars. Events need the bundled `TimeStrip.app` (not `cargo run`),
+  because macOS only grants calendar access to apps that explain why they need it.
 
 ## How it works
 
 | File | What it does |
 | --- | --- |
 | `src/tray.rs` | Menu bar item and dropdown ([tray-icon](https://github.com/tauri-apps/tray-icon) + [tao](https://github.com/tauri-apps/tao)); ticks once a second |
+| `src/panel.rs` | Clock & calendar panel ([egui](https://github.com/emilk/egui)), launched as `timestrip --panel x y` |
+| `src/calendar.rs` | Month-grid math |
+| `src/events.rs` | Calendar events via EventKit ([objc2](https://github.com/madsmtm/objc2)) |
 | `src/render.rs` | Draws the clocks into an image with [ab_glyph](https://github.com/alexheretic/ab-glyph), using any font found by [fontdb](https://github.com/RazrFalcon/fontdb) |
 | `src/clock.rs` | Time zone math and formatting ([chrono-tz](https://github.com/chronotope/chrono-tz)) |
 | `src/settings.rs` | Settings window ([egui](https://github.com/emilk/egui)), launched as `timestrip --settings` |

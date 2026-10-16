@@ -1,10 +1,10 @@
 //! Draws the menu bar clocks into an RGBA image.
 //!
 //! Rendering the text ourselves (instead of using the status item's plain title) is what
-//! allows any installed font, any size and weight, stacked layouts, custom colors,
-//! letter spacing and pixel-level vertical alignment.
+//! allows any installed font, any size and weight, a different style per region, stacked
+//! layouts, custom colors, letter spacing and pixel-level vertical alignment.
 
-use crate::clock::Segment;
+use crate::clock::{Segment, SegmentStyle};
 use crate::config::{Config, Layout};
 use ab_glyph::{point, Font, FontVec, GlyphId, PxScale, ScaleFont, VariableFont};
 use std::collections::HashMap;
@@ -31,11 +31,17 @@ pub struct Image {
     pub height: u32,
     /// Straight (non-premultiplied) RGBA.
     pub rgba: Vec<u8>,
+    /// True when everything uses the automatic color, so macOS can recolor it for
+    /// light and dark menu bars ("template image").
+    pub template: bool,
 }
+
+type Chain = Rc<Vec<Rc<FontVec>>>;
 
 pub struct Renderer {
     db: fontdb::Database,
     cache: HashMap<(String, u16), Option<Rc<FontVec>>>,
+    chains: HashMap<(String, u16), Chain>,
 }
 
 impl Default for Renderer {
@@ -48,7 +54,7 @@ impl Renderer {
     pub fn new() -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
-        Renderer { db, cache: HashMap::new() }
+        Renderer { db, cache: HashMap::new(), chains: HashMap::new() }
     }
 
     /// Installed font family names, sorted, without hidden (dot-prefixed) system families.
@@ -76,7 +82,6 @@ impl Renderer {
             ..Default::default()
         };
         let font = self.db.query(&query).and_then(|id| {
-            // Only accept an exact family match; fontdb never substitutes for named families.
             self.db.with_face_data(id, |data, index| {
                 FontVec::try_from_vec_and_index(data.to_vec(), index).ok()
             })?
@@ -88,21 +93,6 @@ impl Renderer {
         });
         self.cache.insert(key, font.clone());
         font
-    }
-
-    /// The configured font, or the system font.
-    fn primary(&mut self, family: &str, weight: u16) -> Rc<FontVec> {
-        if !family.trim().is_empty() {
-            if let Some(f) = self.load(family.trim(), weight) {
-                return f;
-            }
-        }
-        for name in SYSTEM_FAMILIES {
-            if let Some(f) = self.load(name, weight) {
-                return f;
-            }
-        }
-        self.generic(weight).expect("no usable fonts are installed")
     }
 
     fn generic(&mut self, weight: u16) -> Option<Rc<FontVec>> {
@@ -118,47 +108,66 @@ impl Renderer {
             .map(Rc::new)
     }
 
-    fn fonts(&mut self, c: &Config) -> Vec<Rc<FontVec>> {
-        let mut list = vec![self.primary(&c.font_family, c.font_weight)];
+    /// The configured font (or the system font) followed by fallbacks for missing characters.
+    fn chain(&mut self, family: &str, weight: u16) -> Chain {
+        let key = (family.trim().to_string(), weight);
+        if let Some(c) = self.chains.get(&key) {
+            return c.clone();
+        }
+        let mut primary = None;
+        if !key.0.is_empty() {
+            primary = self.load(&key.0, weight);
+        }
+        if primary.is_none() {
+            primary = SYSTEM_FAMILIES.iter().find_map(|name| self.load(name, weight));
+        }
+        let primary = primary
+            .or_else(|| self.generic(weight))
+            .expect("no usable fonts are installed");
+        let mut list = vec![primary];
         for name in FALLBACK_FAMILIES {
-            if let Some(f) = self.load(name, c.font_weight) {
+            if let Some(f) = self.load(name, weight) {
                 list.push(f);
             }
         }
-        list
+        let chain = Rc::new(list);
+        self.chains.insert(key, chain.clone());
+        chain
     }
 
     /// Renders the menu bar image. Returns `None` when no clock is pinned to the bar.
-    pub fn render(&mut self, segments: &[Segment], c: &Config) -> Option<Image> {
+    ///
+    /// `auto_color` is used for clocks without their own color when the image can't be a
+    /// template (because some other clock has a custom color).
+    pub fn render(&mut self, segments: &[Segment], c: &Config, auto_color: [u8; 3]) -> Option<Image> {
         if segments.is_empty() {
             return None;
         }
-        let fonts = self.fonts(c);
-        let base: [f32; 3] = if c.use_custom_color {
-            c.color.map(|v| v as f32 / 255.0)
-        } else {
-            [0.0, 0.0, 0.0] // used as a template image: macOS recolors it for light/dark
+        let template = segments.iter().all(|s| s.style.color.is_none());
+        let color_of = |style: &SegmentStyle| -> [f32; 3] {
+            let rgb = if template { [0, 0, 0] } else { style.color.unwrap_or(auto_color) };
+            rgb.map(|v| v as f32 / 255.0)
         };
         let dim_alpha = if c.dim_labels { c.dim_amount } else { 1.0 };
-        let time_px = c.font_size * SCALE;
-        let small_px = match c.layout {
-            Layout::Inline => time_px,
-            Layout::Stacked => time_px * c.label_scale,
-        };
         let tracking = c.letter_spacing * SCALE;
 
         // Build columns of lines of styled runs.
-        let columns: Vec<Vec<Vec<Run>>> = segments
-            .iter()
-            .map(|seg| match c.layout {
+        let mut columns: Vec<Vec<Vec<Run>>> = Vec::new();
+        for seg in segments {
+            let st = &seg.style;
+            let fonts = self.chain(&st.font_family, st.font_weight);
+            let rgb = color_of(st);
+            let time_px = st.font_size * SCALE;
+            let run = |text: String, px: f32, alpha: f32| Run { text, px, rgb, alpha, fonts: fonts.clone() };
+            let col = match c.layout {
                 Layout::Inline => {
                     let mut line = Vec::new();
                     if let Some(l) = &seg.label {
-                        line.push(Run::new(format!("{l} "), time_px, dim_alpha));
+                        line.push(run(format!("{l} "), time_px, dim_alpha));
                     }
-                    line.push(Run::new(seg.time.clone(), time_px, 1.0));
+                    line.push(run(seg.time.clone(), time_px, 1.0));
                     if let Some(d) = &seg.date {
-                        line.push(Run::new(format!(" {d}"), time_px, dim_alpha));
+                        line.push(run(format!(" {d}"), time_px, dim_alpha));
                     }
                     vec![line]
                 }
@@ -167,15 +176,16 @@ impl Renderer {
                         [seg.label.as_deref(), seg.date.as_deref()].into_iter().flatten().collect();
                     let mut lines = Vec::new();
                     if !top.is_empty() {
-                        lines.push(vec![Run::new(top.join(" · "), small_px, dim_alpha)]);
+                        lines.push(vec![run(top.join(" · "), time_px * c.label_scale, dim_alpha)]);
                     }
-                    lines.push(vec![Run::new(seg.time.clone(), time_px, 1.0)]);
+                    lines.push(vec![run(seg.time.clone(), time_px, 1.0)]);
                     lines
                 }
-            })
-            .collect();
+            };
+            columns.push(col);
+        }
 
-        let ctx = Ctx { fonts: &fonts, tabular: c.tabular_digits, tracking };
+        let ctx = Ctx { tabular: c.tabular_digits, tracking };
 
         // Measure.
         let col_sizes: Vec<(f32, f32)> = columns
@@ -187,7 +197,19 @@ impl Renderer {
             })
             .collect();
         let sep = c.separator.trim();
-        let sep_run = (!sep.is_empty()).then(|| Run::new(sep.to_string(), time_px, dim_alpha));
+        let sep_run = if sep.is_empty() {
+            None
+        } else {
+            let fonts = self.chain(&c.font_family, c.font_weight);
+            let rgb = if template {
+                [0.0; 3]
+            } else if c.use_custom_color {
+                c.color.map(|v| v as f32 / 255.0)
+            } else {
+                auto_color.map(|v| v as f32 / 255.0)
+            };
+            Some(Run { text: sep.to_string(), px: c.font_size * SCALE, rgb, alpha: dim_alpha, fonts })
+        };
         let sep_w = sep_run.as_ref().map(|r| ctx.line_width(std::slice::from_ref(r))).unwrap_or(0.0);
         let gap = c.spacing * SCALE;
         let n = columns.len() as f32;
@@ -196,7 +218,7 @@ impl Renderer {
         let content_h = col_sizes.iter().map(|s| s.1).fold(0.0, f32::max);
         let height = (BAR_HEIGHT_PT * SCALE).max(content_h.ceil()) as u32;
         let width = (total_w.ceil() as u32).max(1) + 2; // 1px breathing room each side
-        let mut canvas = Canvas::new(width, height, base);
+        let mut canvas = Canvas::new(width, height);
         let offset = -c.vertical_offset * SCALE; // positive config value moves text up
 
         // Draw.
@@ -227,36 +249,26 @@ impl Renderer {
                 }
             }
         }
-        Some(canvas.into_image())
+        Some(canvas.into_image(template))
     }
 }
 
 struct Run {
     text: String,
     px: f32,
+    rgb: [f32; 3],
     alpha: f32,
+    fonts: Chain,
 }
 
 impl Run {
-    fn new(text: String, px: f32, alpha: f32) -> Self {
-        Run { text, px, alpha }
-    }
-}
-
-struct Ctx<'a> {
-    fonts: &'a [Rc<FontVec>],
-    tabular: bool,
-    tracking: f32,
-}
-
-impl Ctx<'_> {
     fn primary(&self) -> &FontVec {
         self.fonts[0].as_ref()
     }
 
-    /// First font that has a glyph for `ch`.
+    /// First font in the chain that has a glyph for `ch`.
     fn font_for(&self, ch: char) -> (&FontVec, GlyphId) {
-        for f in self.fonts {
+        for f in self.fonts.iter() {
             let id = f.glyph_id(ch);
             if id.0 != 0 {
                 return (f.as_ref(), id);
@@ -264,22 +276,27 @@ impl Ctx<'_> {
         }
         (self.primary(), self.primary().glyph_id(ch))
     }
+}
 
-    fn digit_width(&self, px: f32) -> f32 {
-        let scaled = self.primary().as_scaled(PxScale::from(px));
-        ('0'..='9')
-            .map(|d| scaled.h_advance(self.primary().glyph_id(d)))
-            .fold(0.0, f32::max)
+struct Ctx {
+    tabular: bool,
+    tracking: f32,
+}
+
+impl Ctx {
+    /// The run with the largest text decides a line's metrics.
+    fn tallest<'a>(&self, line: &'a [Run]) -> &'a Run {
+        line.iter().max_by(|a, b| a.px.total_cmp(&b.px)).expect("empty line")
     }
 
     fn line_ascent(&self, line: &[Run]) -> f32 {
-        let px = line.iter().map(|r| r.px).fold(0.0, f32::max);
-        self.primary().as_scaled(PxScale::from(px)).ascent()
+        let r = self.tallest(line);
+        r.primary().as_scaled(PxScale::from(r.px)).ascent()
     }
 
     fn line_height(&self, line: &[Run]) -> f32 {
-        let px = line.iter().map(|r| r.px).fold(0.0, f32::max);
-        let s = self.primary().as_scaled(PxScale::from(px));
+        let r = self.tallest(line);
+        let s = r.primary().as_scaled(PxScale::from(r.px));
         s.ascent() - s.descent()
     }
 
@@ -296,16 +313,16 @@ impl Ctx<'_> {
     /// Lays out (and optionally draws) one run, returning its advance width.
     fn layout_run(&self, run: &Run, x0: f32, baseline: f32, mut canvas: Option<&mut Canvas>) -> f32 {
         let scale = PxScale::from(run.px);
-        let digit_w = self.digit_width(run.px);
+        let primary = run.primary().as_scaled(scale);
+        let digit_w = ('0'..='9').map(|d| primary.h_advance(run.primary().glyph_id(d))).fold(0.0, f32::max);
         let mut x = x0;
         let mut prev: Option<(GlyphId, *const FontVec)> = None;
         for ch in run.text.chars() {
-            let (font, id) = self.font_for(ch);
+            let (font, id) = run.font_for(ch);
             let scaled = font.as_scaled(scale);
             let mut adv = scaled.h_advance(id);
             let mut shift = 0.0;
-            let tab = self.tabular && ch.is_ascii_digit();
-            if tab {
+            if self.tabular && ch.is_ascii_digit() {
                 shift = (digit_w - adv) / 2.0;
                 adv = digit_w;
             } else if let Some((p, pf)) = prev {
@@ -321,6 +338,7 @@ impl Ctx<'_> {
                         canvas.blend(
                             b.min.x as i32 + gx as i32,
                             b.min.y as i32 + gy as i32,
+                            run.rgb,
                             cov * run.alpha,
                         );
                     });
@@ -336,66 +354,77 @@ impl Ctx<'_> {
 struct Canvas {
     w: u32,
     h: u32,
-    color: [f32; 3],
-    /// Coverage per pixel (0…1); the color is uniform, so alpha is all we need to track.
-    alpha: Vec<f32>,
+    /// Premultiplied RGBA, 0…1.
+    px: Vec<[f32; 4]>,
 }
 
 impl Canvas {
-    fn new(w: u32, h: u32, color: [f32; 3]) -> Self {
-        Canvas { w, h, color, alpha: vec![0.0; (w * h) as usize] }
+    fn new(w: u32, h: u32) -> Self {
+        Canvas { w, h, px: vec![[0.0; 4]; (w * h) as usize] }
     }
 
-    fn blend(&mut self, x: i32, y: i32, a: f32) {
+    fn blend(&mut self, x: i32, y: i32, rgb: [f32; 3], a: f32) {
         if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 {
             return;
         }
-        let i = (y as u32 * self.w + x as u32) as usize;
-        let d = self.alpha[i];
-        self.alpha[i] = a.clamp(0.0, 1.0) + d * (1.0 - a.clamp(0.0, 1.0));
+        let a = a.clamp(0.0, 1.0);
+        let d = &mut self.px[(y as u32 * self.w + x as u32) as usize];
+        for k in 0..3 {
+            d[k] = rgb[k] * a + d[k] * (1.0 - a);
+        }
+        d[3] = a + d[3] * (1.0 - a);
     }
 
-    fn into_image(self) -> Image {
-        let [r, g, b] = self.color.map(|v| (v * 255.0).round() as u8);
-        let mut rgba = Vec::with_capacity(self.alpha.len() * 4);
-        for a in self.alpha {
-            rgba.extend_from_slice(&[r, g, b, (a * 255.0).round() as u8]);
+    fn into_image(self, template: bool) -> Image {
+        let mut rgba = Vec::with_capacity(self.px.len() * 4);
+        for [r, g, b, a] in self.px {
+            let un = |v: f32| if a > 0.0 { ((v / a).clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 };
+            rgba.extend_from_slice(&[un(r), un(g), un(b), (a * 255.0).round() as u8]);
         }
-        Image { width: self.w, height: self.h, rgba }
+        Image { width: self.w, height: self.h, rgba, template }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clock::Segment;
 
-    fn seg(label: &str, time: &str) -> Segment {
-        Segment { label: Some(label.into()), time: time.into(), date: None }
+    fn seg(label: &str, time: &str, size: f32, color: Option<[u8; 3]>) -> Segment {
+        Segment {
+            label: Some(label.into()),
+            time: time.into(),
+            date: None,
+            style: SegmentStyle { font_family: String::new(), font_weight: 400, font_size: size, color },
+        }
     }
 
     #[test]
-    fn renders_something_and_grows_with_size() {
+    fn renders_and_grows_with_size() {
         let mut r = Renderer::new();
         if r.db.is_empty() {
-            return; // no fonts on this machine (minimal CI container)
+            return; // no fonts on this machine
         }
-        let segs = vec![seg("NYC", "8:35 PM"), seg("TYO", "9:35 AM")];
         let mut c = Config::default();
-        let small = r.render(&segs, &c).unwrap();
+        let small = r.render(&[seg("NYC", "8:35 PM", 13.0, None), seg("TYO", "9:35 AM", 13.0, None)], &c, [0; 3]).unwrap();
         assert_eq!(small.height, (BAR_HEIGHT_PT * SCALE) as u32);
+        assert!(small.template);
         assert!(small.rgba.chunks(4).any(|p| p[3] > 0), "image should not be blank");
-        c.font_size = 20.0;
-        let big = r.render(&segs, &c).unwrap();
-        assert!(big.width > small.width);
+
+        let big = r.render(&[seg("NYC", "8:35 PM", 13.0, None), seg("TYO", "9:35 AM", 20.0, None)], &c, [0; 3]).unwrap();
+        assert!(big.width > small.width, "a larger region should widen the image");
+
+        let colored = r.render(&[seg("NYC", "8:35 PM", 13.0, Some([255, 0, 0]))], &c, [0; 3]).unwrap();
+        assert!(!colored.template);
+        assert!(colored.rgba.chunks(4).any(|p| p[3] > 200 && p[0] > 200 && p[1] < 50));
+
         c.layout = Layout::Stacked;
-        let stacked = r.render(&segs, &c).unwrap();
+        let stacked = r.render(&[seg("NYC", "8:35 PM", 13.0, None), seg("TYO", "9:35 AM", 20.0, None)], &c, [0; 3]).unwrap();
         assert!(stacked.width < big.width);
     }
 
     #[test]
     fn nothing_pinned_means_no_image() {
         let mut r = Renderer::new();
-        assert!(r.render(&[], &Config::default()).is_none());
+        assert!(r.render(&[], &Config::default(), [0; 3]).is_none());
     }
 }

@@ -2,7 +2,7 @@
 name = "timestrip"
 version = "0.1.0"
 edition = "2021"
-description = "A customizable menu bar world clock for macOS"
+description = "A customizable menu bar world clock and calendar for macOS"
 license = "MIT"
 publish = false
 
@@ -28,6 +28,15 @@ arboard = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFRunLoop"] }
+# Reading the Calendar app's events (EventKit)
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDate", "NSError", "NSString", "NSObject"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSColor", "NSColorSpace"] }
+objc2-event-kit = { version = "0.3.2", default-features = false, features = [
+  "std", "block2", "objc2-app-kit",
+  "EKTypes", "EKObject", "EKCalendar", "EKCalendarItem", "EKEvent", "EKEventStore", "EKSource",
+] }
 
 [profile.release]
 lto = "thin"
