@@ -10,6 +10,8 @@ on:
 jobs:
   macos:
     runs-on: macos-latest
+    env:
+      CARGO_TERM_COLOR: never
     permissions:
       contents: write
     steps:
@@ -31,10 +33,20 @@ jobs:
       - name: Report errors
         if: failure()
         run: |
+          # Annotations are capped at ~4 KB each and 10 per step, so send only the
+          # interesting lines, in chunks.
           for f in build.log test.log; do
             [ -f "$f" ] || continue
-            body=$(grep -vE '^\s*(Compiling|Downloaded|Downloading|Checking|Fresh|Locking|Adding|Updating)\b' "$f" | tail -c 60000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-            echo "::error title=$f::$body"
+            grep -E 'error|panicked|FAILED|failures:|^src/|^ *--> |assert' "$f" \
+              | grep -vE '^\s*(Compiling|Downloaded|Checking)' > "$f.short" || true
+            split -b 3500 "$f.short" "$f.part."
+            n=0
+            for p in "$f".part.*; do
+              [ -f "$p" ] || continue
+              n=$((n+1)); [ $n -le 9 ] || break
+              body=$(sed -e 's/%/%25/g' "$p" | awk '{printf "%s%%0A", $0}')
+              echo "::error title=$f ($n)::$body"
+            done
           done
 
       - name: Build TimeStrip.app (universal)
