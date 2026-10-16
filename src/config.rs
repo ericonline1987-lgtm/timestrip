@@ -170,6 +170,14 @@ impl Default for PanelConfig {
 pub struct Config {
     pub zones: Vec<Zone>,
 
+    // ---- Language & time zone ----
+    /// Interface language code ("en", "zh-Hans", "ja", …); empty = follow the system.
+    pub language: String,
+    /// Language for weekday and month names; empty = same as the interface.
+    pub date_language: String,
+    /// IANA time zone used as "Local"; empty = the system time zone.
+    pub local_time_zone: String,
+
     // ---- Menu bar appearance (defaults for every region) ----
     pub layout: Layout,
     /// Font family name; empty = the system font.
@@ -226,6 +234,9 @@ impl Default for Config {
                 Zone::new("Europe/London", "LON"),
                 Zone::new("Asia/Tokyo", "TYO"),
             ],
+            language: String::new(),
+            date_language: String::new(),
+            local_time_zone: String::new(),
             layout: Layout::Inline,
             font_family: String::new(),
             font_size: 13.0,
@@ -262,6 +273,9 @@ impl Config {
         let keep = std::mem::take(self);
         *self = Config {
             zones: keep.zones,
+            language: keep.language,
+            date_language: keep.date_language,
+            local_time_zone: keep.local_time_zone,
             panel: keep.panel,
             calendar: keep.calendar,
             ..Config::default()
@@ -334,13 +348,24 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// Loads the config, falling back to defaults if the file is missing or unreadable.
+/// Loads the config, falling back to defaults if the file is missing or unreadable,
+/// and applies its language and time zone settings to this process.
 pub fn load() -> Config {
-    std::fs::read_to_string(config_path())
+    let c = std::fs::read_to_string(config_path())
         .ok()
         .and_then(|s| serde_json::from_str::<Config>(&s).ok())
         .unwrap_or_default()
-        .sanitized()
+        .sanitized();
+    c.apply_globals();
+    c
+}
+
+impl Config {
+    /// Language and "Local" time zone are process-wide; call after changing them.
+    pub fn apply_globals(&self) {
+        crate::i18n::apply(&self.language, &self.date_language);
+        crate::clock::set_local_override(&self.local_time_zone);
+    }
 }
 
 /// Writes atomically (temp file + rename) so a reader never sees half a file.

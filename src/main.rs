@@ -12,6 +12,7 @@ mod calendar;
 mod clock;
 mod config;
 mod events;
+mod i18n;
 mod login;
 mod panel;
 mod render;

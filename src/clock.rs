@@ -5,12 +5,25 @@ use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 
-/// The time zone you're in, falling back to UTC if it can't be determined.
-pub fn local_tz() -> Tz {
+static LOCAL_OVERRIDE: std::sync::Mutex<Option<Tz>> = std::sync::Mutex::new(None);
+
+/// Uses `name` as "Local" instead of the system time zone (empty = system).
+pub fn set_local_override(name: &str) {
+    let tz = name.trim().parse::<Tz>().ok();
+    *LOCAL_OVERRIDE.lock().unwrap() = tz;
+}
+
+/// The system's own time zone, falling back to UTC if it can't be determined.
+pub fn system_tz() -> Tz {
     iana_time_zone::get_timezone()
         .ok()
         .and_then(|name| name.parse::<Tz>().ok())
         .unwrap_or(Tz::UTC)
+}
+
+/// The time zone treated as "Local": your chosen override, or the system's.
+pub fn local_tz() -> Tz {
+    LOCAL_OVERRIDE.lock().unwrap().unwrap_or_else(system_tz)
 }
 
 /// "Los Angeles" for America/Los_Angeles.
@@ -35,13 +48,15 @@ pub fn safe_format<T: TimeZone>(dt: &DateTime<T>, pattern: &str) -> Option<Strin
 where
     T::Offset: std::fmt::Display,
 {
-    let items: Vec<Item> = StrftimeItems::new(pattern).collect();
+    // Weekday/month names and AM/PM follow the chosen date language.
+    let locale = crate::i18n::date_locale();
+    let items: Vec<Item> = StrftimeItems::new_with_locale(pattern, locale).collect();
     if items.iter().any(|i| matches!(i, Item::Error)) {
         return None;
     }
     use std::fmt::Write;
     let mut out = String::new();
-    write!(out, "{}", dt.format_with_items(items.iter())).ok()?;
+    write!(out, "{}", dt.format_localized_with_items(items.iter(), locale)).ok()?;
     Some(out)
 }
 
@@ -93,7 +108,7 @@ fn offset_seconds(now: DateTime<Utc>, tz: Tz) -> i32 {
 pub fn offset_string(now: DateTime<Utc>, tz: Tz, local: Tz) -> String {
     let diff = offset_seconds(now, tz) - offset_seconds(now, local);
     if diff == 0 {
-        return "same time".into();
+        return crate::i18n::t("same time").into();
     }
     let sign = if diff > 0 { "+" } else { "−" };
     let (h, m) = (diff.abs() / 3600, (diff.abs() % 3600) / 60);

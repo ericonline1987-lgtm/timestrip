@@ -6,6 +6,7 @@ use crate::calendar;
 use crate::clock;
 use crate::config::{self, Config, EventRegions};
 use crate::events::{self, Access, Event, EventSource};
+use crate::i18n::{t, tf};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use eframe::egui::{self, Align, Align2, Color32, FontId, Margin, RichText, Sense, Stroke, Vec2};
@@ -89,7 +90,7 @@ impl PanelApp {
     fn region_name(&self, r: Region) -> String {
         match r.and_then(|i| self.config.zones.get(i)) {
             Some(z) => z.display_name(),
-            None => "Local".into(),
+            None => t("Local").into(),
         }
     }
 
@@ -192,14 +193,14 @@ impl PanelApp {
         ui.add_space(6.0);
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("Settings…").clicked() {
+            if ui.button(t("Settings…")).clicked() {
                 crate::spawn_self(&["--settings"]);
             }
-            if cfg!(target_os = "macos") && ui.button("Open Calendar").clicked() {
+            if cfg!(target_os = "macos") && ui.button(t("Open Calendar")).clicked() {
                 let _ = std::process::Command::new("open").args(["-a", "Calendar"]).spawn();
             }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Close").clicked() {
+                if ui.button(t("Close")).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
@@ -246,7 +247,7 @@ impl PanelApp {
                 })
                 .response;
             let id = egui::Id::new(("clock-row", r));
-            if ui.interact(resp.rect, id, Sense::click()).on_hover_text("Show this region's calendar").clicked() {
+            if ui.interact(resp.rect, id, Sense::click()).on_hover_text(t("Show this region's calendar")).clicked() {
                 clicked = Some(r);
             }
         }
@@ -260,20 +261,20 @@ impl PanelApp {
         ui.horizontal(|ui| {
             let m = self.slider_minutes.round() as i64;
             let text = if m == 0 {
-                "Drag to see other times".to_string()
+                t("Drag to see other times").to_string()
             } else {
-                let sign = if m > 0 { "+" } else { "−" };
                 let (h, mm) = (m.abs() / 60, m.abs() % 60);
-                match (h, mm) {
-                    (0, mm) => format!("{sign}{mm}m from now"),
-                    (h, 0) => format!("{sign}{h}h from now"),
-                    (h, mm) => format!("{sign}{h}h {mm}m from now"),
-                }
+                let amount = match (h, mm) {
+                    (0, mm) => format!("{mm}m"),
+                    (h, 0) => format!("{h}h"),
+                    (h, mm) => format!("{h}h {mm}m"),
+                };
+                tf(if m > 0 { "{} from now" } else { "{} ago" }, &[&amount])
             };
             ui.label(RichText::new(text).small().weak());
             if m != 0 {
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    if ui.small_button("Now").clicked() {
+                    if ui.small_button(t("Now")).clicked() {
                         self.slider_minutes = 0.0;
                     }
                 });
@@ -290,7 +291,7 @@ impl PanelApp {
     fn calendar(&mut self, ui: &mut egui::Ui) {
         // Which region's calendar.
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Calendar for").small().weak());
+            ui.label(RichText::new(t("Calendar for")).small().weak());
             let mut choice = self.region;
             let options: Vec<Region> = std::iter::once(None).chain((0..self.config.zones.len()).map(Some)).collect();
             for r in options {
@@ -315,7 +316,7 @@ impl PanelApp {
                 self.view = calendar::shift_month(y, m, 1);
             }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Today").clicked() {
+                if ui.button(t("Today")).clicked() {
                     self.go_to_today();
                 }
             });
@@ -341,7 +342,7 @@ impl PanelApp {
             ui.spacing_mut().item_spacing.x = 0.0;
             if cal.show_week_numbers {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(cell_w, 18.0), Sense::hover());
-                ui.painter().text(rect.center(), Align2::CENTER_CENTER, "Wk", FontId::proportional(10.0), visuals.weak_text_color());
+                ui.painter().text(rect.center(), Align2::CENTER_CENTER, t("Wk"), FontId::proportional(10.0), visuals.weak_text_color());
             }
             for label in calendar::weekday_labels(cal.first_weekday) {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(cell_w, 18.0), Sense::hover());
@@ -453,17 +454,17 @@ impl PanelApp {
         match self.source.access() {
             Access::Granted => {}
             Access::NotDetermined => {
-                ui.label(RichText::new("See your calendar events here, shown in every region's time.").weak());
-                if ui.button("Show my calendar events").clicked() {
+                ui.label(RichText::new(t("See your calendar events here, shown in every region's time.")).weak());
+                if ui.button(t("Show my calendar events")).clicked() {
                     self.source.request_access();
                 }
                 return;
             }
             Access::Denied => {
-                ui.label(RichText::new(
+                ui.label(RichText::new(t(
                     "TimeStrip isn't allowed to read your calendars. Turn it on in System Settings → Privacy & Security → Calendars.",
-                ).weak());
-                if cfg!(target_os = "macos") && ui.button("Open Privacy Settings").clicked() {
+                )).weak());
+                if cfg!(target_os = "macos") && ui.button(t("Open Privacy Settings")).clicked() {
                     let _ = std::process::Command::new("open")
                         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
                         .spawn();
@@ -479,11 +480,11 @@ impl PanelApp {
         let tz = self.region_tz(self.region);
         let local = self.local();
         let day = self.selected;
-        let heading = format!("{} · {}", day.format("%A, %B %-d"), self.region_name(self.region));
+        let heading = format!("{} · {}", calendar::long_date(day), self.region_name(self.region));
         ui.label(RichText::new(heading).strong());
         let todays: Vec<Event> = self.events.iter().filter(|e| events::on_day(e, day, tz, local)).cloned().collect();
         if todays.is_empty() {
-            ui.label(RichText::new("No events").weak());
+            ui.label(RichText::new(t("No events")).weak());
         }
         for e in &todays {
             self.event_row(ui, e);
@@ -502,7 +503,7 @@ impl PanelApp {
                 continue;
             }
             ui.add_space(6.0);
-            ui.label(RichText::new(d.format("%A, %B %-d").to_string()).strong().small());
+            ui.label(RichText::new(calendar::long_date(d)).strong().small());
             for e in &list {
                 self.event_row(ui, e);
             }
@@ -531,7 +532,7 @@ impl PanelApp {
             ui.vertical(|ui| {
                 ui.label(RichText::new(&e.title).strong());
                 let main = if e.all_day {
-                    "All day".to_string()
+                    t("All day").to_string()
                 } else {
                     self.range_in(e, primary)
                 };

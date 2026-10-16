@@ -13,9 +13,11 @@ tao = "0.37"
 # Settings window
 eframe = "0.37"
 # Time zones
-chrono = "0.4"
+chrono = { version = "0.4", features = ["unstable-locales"] }
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
+# Interface language
+sys-locale = "0.3"
 # Text rendering for the menu bar image (any installed font, any size)
 fontdb = "0.24"
 ab_glyph = "0.2.32"

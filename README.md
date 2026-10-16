@@ -37,6 +37,11 @@ Make your home office big and bold and the rest small and dim.
 **Right-click menu** — every region's time, date and offset (click to copy), Copy All
 Times, Show Clocks & Calendar, Settings…, Open at Login, Quit.
 
+**Language & time zone** — the interface is available in English, 简体中文, 繁體中文,
+日本語, 한국어, Español, Français and Deutsch (or follows your system). Weekday and month
+names can use the same language or a different one. "Local" follows your Mac's time zone,
+or you can pick another one in Settings → Language.
+
 **Settings window** with a live preview on light and dark menu bars. Changes are saved
 instantly; the menu bar and panel update within a second.
 

@@ -4,9 +4,10 @@
 use crate::clock;
 use crate::config::{self, city_name, ClickAction, Config, DateMode, EventRegions, Layout, Zone, ZoneStyle};
 use crate::events::{Access, CalendarInfo, EventSource};
+use crate::i18n::{self, t, tf};
 use crate::login;
 use crate::render::{Renderer, SCALE};
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use eframe::egui::{self, Color32, ColorImage, RichText, TextureHandle, TextureOptions};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ enum Tab {
     Appearance,
     TimeDate,
     Calendar,
+    Language,
     General,
 }
 
@@ -35,15 +37,16 @@ struct SettingsApp {
 }
 
 pub fn run() -> eframe::Result {
+    // Load first so the window title is in the chosen language.
+    let config = config::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("TimeStrip Settings")
+            .with_title(t("TimeStrip Settings"))
             .with_inner_size([680.0, 720.0])
             .with_min_inner_size([540.0, 440.0]),
         ..Default::default()
     };
     let renderer = Renderer::new();
-    let config = config::load();
     let mut app = SettingsApp {
         saved: config.clone(),
         config,
@@ -76,7 +79,7 @@ const DATE_PRESETS: [(&str, &str); 6] = [
 ];
 
 fn weight_name(w: u16) -> &'static str {
-    WEIGHT_NAMES[((w / 100).clamp(1, 9) - 1) as usize]
+    t(WEIGHT_NAMES[((w / 100).clamp(1, 9) - 1) as usize])
 }
 
 fn weak(text: impl Into<String>) -> RichText {
@@ -96,11 +99,12 @@ impl SettingsApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Clocks, "🌐 Regions");
-                ui.selectable_value(&mut self.tab, Tab::Appearance, "🔠 Appearance");
-                ui.selectable_value(&mut self.tab, Tab::TimeDate, "🕘 Time & Date");
-                ui.selectable_value(&mut self.tab, Tab::Calendar, "📅 Calendar & Panel");
-                ui.selectable_value(&mut self.tab, Tab::General, "⚙ General");
+                ui.selectable_value(&mut self.tab, Tab::Clocks, format!("🌐 {}", t("Regions")));
+                ui.selectable_value(&mut self.tab, Tab::Appearance, format!("🔠 {}", t("Appearance")));
+                ui.selectable_value(&mut self.tab, Tab::TimeDate, format!("🕘 {}", t("Time & Date")));
+                ui.selectable_value(&mut self.tab, Tab::Calendar, format!("📅 {}", t("Calendar & Panel")));
+                ui.selectable_value(&mut self.tab, Tab::Language, format!("🌍 {}", t("Language")));
+                ui.selectable_value(&mut self.tab, Tab::General, format!("⚙ {}", t("General")));
             });
             ui.separator();
             self.preview_ui(ui);
@@ -110,17 +114,26 @@ impl SettingsApp {
                 Tab::Appearance => self.appearance_tab(ui),
                 Tab::TimeDate => self.time_tab(ui),
                 Tab::Calendar => self.calendar_tab(ui),
+                Tab::Language => self.language_tab(ui),
                 Tab::General => self.general_tab(ui),
             });
         });
 
         if self.config != self.saved {
+            if self.config.language != self.saved.language
+                || self.config.date_language != self.saved.date_language
+                || self.config.local_time_zone != self.saved.local_time_zone
+            {
+                self.config.apply_globals();
+                self.preview = None;
+                self.calendars = None;
+            }
             match config::save(&self.config) {
                 Ok(()) => {
                     self.saved = self.config.clone();
                     self.save_error = None;
                 }
-                Err(e) => self.save_error = Some(format!("Couldn't save settings: {e}")),
+                Err(e) => self.save_error = Some(tf("Couldn't save settings: {}", &[&e.to_string()])),
             }
         }
     }
@@ -168,7 +181,7 @@ impl SettingsApp {
                 ui.label(hint("The menu bar is about 22 pt tall; anything taller is scaled down to fit."));
             }
             None => {
-                ui.label("No regions are shown in the menu bar. Tick “Menu bar” on the Regions tab.");
+                ui.label(t("No regions are shown in the menu bar. Tick “Menu bar” on the Regions tab."));
             }
         }
         if let Some(err) = &self.save_error {
@@ -177,10 +190,9 @@ impl SettingsApp {
     }
 
     fn clocks_tab(&mut self, ui: &mut egui::Ui) {
-        ui.label(weak(
-            "Each region can have its own label, size, font, color and time format. \
-             Anything not set here uses the Appearance and Time & Date tabs.",
-        ));
+        ui.label(weak(t(
+            t("Each region can have its own label, size, font, color and time format. Anything not set here uses the Appearance and Time & Date tabs."),
+        )));
         ui.add_space(6.0);
 
         enum Action {
@@ -210,16 +222,16 @@ impl SettingsApp {
                         ui.label(hint(z.tz.clone()));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Remove").clicked() {
+                        if ui.button(t("Remove")).clicked() {
                             action = Some(Action::Remove(i));
                         }
-                        ui.checkbox(&mut z.show_in_bar, "Menu bar");
+                        ui.checkbox(&mut z.show_in_bar, t("Menu bar"));
                     });
                 });
                 let title = if z.style.is_empty() {
-                    "Style for this region (using defaults)".to_string()
+                    t("Style for this region (using defaults)").to_string()
                 } else {
-                    "Style for this region (customized)".to_string()
+                    t("Style for this region (customized)").to_string()
                 };
                 egui::CollapsingHeader::new(title).id_salt(("zone-style", i)).show(ui, |ui| {
                     zone_style_ui(ui, &mut z.style, &global, families, i);
@@ -238,7 +250,7 @@ impl SettingsApp {
         }
 
         ui.add_space(12.0);
-        ui.heading("Add a region");
+        ui.heading(t("Add a region"));
         ui.add(
             egui::TextEdit::singleline(&mut self.zone_query)
                 .hint_text("Search a city or region, e.g. Tokyo, Paris, Kolkata")
@@ -254,7 +266,7 @@ impl SettingsApp {
                 .take(40)
                 .collect();
             if matches.is_empty() {
-                ui.label(weak("No matching time zones."));
+                ui.label(weak(t("No matching time zones.")));
             }
             let now = Utc::now();
             let local = clock::local_tz();
@@ -277,10 +289,10 @@ impl SettingsApp {
 
     fn appearance_tab(&mut self, ui: &mut egui::Ui) {
         let c = &mut self.config;
-        ui.label(weak("Defaults for every region. Individual regions can override these on the Regions tab."));
+        ui.label(weak(t("Defaults for every region. Individual regions can override these on the Regions tab.")));
         ui.add_space(6.0);
 
-        ui.heading("Size");
+        ui.heading(t("Size"));
         ui.add(egui::Slider::new(&mut c.font_size, 8.0..=40.0).step_by(0.5).text("Text size (pt)"));
         if c.layout == Layout::Stacked {
             ui.add(egui::Slider::new(&mut c.label_scale, 0.3..=1.2).step_by(0.05).text("Label size (× text size)"));
@@ -290,49 +302,49 @@ impl SettingsApp {
         ui.add(egui::Slider::new(&mut c.vertical_offset, -8.0..=8.0).step_by(0.5).text("Vertical nudge (pt, + is up)"));
 
         ui.add_space(10.0);
-        ui.heading("Layout");
+        ui.heading(t("Layout"));
         ui.horizontal(|ui| {
-            ui.radio_value(&mut c.layout, Layout::Inline, "Single line");
-            ui.radio_value(&mut c.layout, Layout::Stacked, "Stacked (label above time)");
+            ui.radio_value(&mut c.layout, Layout::Inline, t("Single line"));
+            ui.radio_value(&mut c.layout, Layout::Stacked, t("Stacked (label above time)"));
         });
 
         ui.add_space(10.0);
-        ui.heading("Font");
+        ui.heading(t("Font"));
         ui.horizontal(|ui| {
-            ui.label("Filter:");
+            ui.label(t("Filter:"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.font_query)
                     .hint_text("e.g. mono, menlo, avenir")
                     .desired_width(160.0),
             );
         });
-        font_combo(ui, "Family", "font-family", &mut c.font_family, &self.families, &self.font_query);
-        let weight_label = format!("Weight ({})", weight_name(c.font_weight));
+        font_combo(ui, t("Family"), "font-family", &mut c.font_family, &self.families, &self.font_query);
+        let weight_label = format!("{} ({})", t("Weight"), weight_name(c.font_weight));
         ui.add(egui::Slider::new(&mut c.font_weight, 100..=900).step_by(100.0).text(weight_label));
-        ui.checkbox(&mut c.tabular_digits, "Fixed-width digits (stops the clock from jiggling)");
+        ui.checkbox(&mut c.tabular_digits, t("Fixed-width digits (stops the clock from jiggling)"));
 
         ui.add_space(10.0);
-        ui.heading("Style");
-        ui.checkbox(&mut c.show_labels, "Show labels");
+        ui.heading(t("Style"));
+        ui.checkbox(&mut c.show_labels, t("Show labels"));
         ui.horizontal(|ui| {
-            ui.checkbox(&mut c.dim_labels, "Dim labels and dates");
+            ui.checkbox(&mut c.dim_labels, t("Dim labels and dates"));
             ui.add_enabled(c.dim_labels, egui::Slider::new(&mut c.dim_amount, 0.15..=1.0).text("opacity"));
         });
         ui.horizontal(|ui| {
-            ui.label("Separator between regions:");
+            ui.label(t("Separator between regions:"));
             ui.add(egui::TextEdit::singleline(&mut c.separator).hint_text("none — try · | /").desired_width(70.0));
         });
         ui.horizontal(|ui| {
-            ui.checkbox(&mut c.use_custom_color, "Custom color");
+            ui.checkbox(&mut c.use_custom_color, t("Custom color"));
             if c.use_custom_color {
                 ui.color_edit_button_srgb(&mut c.color);
             } else {
-                ui.label(weak("(follows light/dark menu bar)"));
+                ui.label(weak(t("(follows light/dark menu bar)")));
             }
         });
 
         ui.add_space(12.0);
-        if ui.button("Reset appearance to defaults").clicked() {
+        if ui.button(t("Reset appearance to defaults")).clicked() {
             c.reset_appearance();
         }
     }
@@ -341,72 +353,72 @@ impl SettingsApp {
         let c = &mut self.config;
         let now = Utc::now();
         let local = clock::local_tz();
-        ui.label(weak("Defaults for every region. Individual regions can override these on the Regions tab."));
+        ui.label(weak(t("Defaults for every region. Individual regions can override these on the Regions tab.")));
         ui.add_space(6.0);
 
-        ui.heading("Time");
+        ui.heading(t("Time"));
         let custom = !c.custom_time_format.trim().is_empty();
         ui.add_enabled_ui(!custom, |ui| {
-            ui.checkbox(&mut c.use_24h, "24-hour clock");
+            ui.checkbox(&mut c.use_24h, t("24-hour clock"));
             ui.add_enabled_ui(!c.use_24h, |ui| {
-                ui.checkbox(&mut c.show_ampm, "Show AM/PM");
-                ui.checkbox(&mut c.lowercase_ampm, "Lowercase am/pm");
+                ui.checkbox(&mut c.show_ampm, t("Show AM/PM"));
+                ui.checkbox(&mut c.lowercase_ampm, t("Lowercase am/pm"));
             });
-            ui.checkbox(&mut c.show_seconds, "Show seconds");
+            ui.checkbox(&mut c.show_seconds, t("Show seconds"));
         });
         ui.horizontal(|ui| {
-            ui.label("Custom format:");
+            ui.label(t("Custom format:"));
             ui.add(egui::TextEdit::singleline(&mut c.custom_time_format).hint_text("e.g. %H.%M").desired_width(120.0));
             ui.label(weak(format!("→ {}", clock::time_string(now, local, c))));
         });
         ui.label(hint(
-            "Leave empty to use the options above. %H hour (24h), %-I hour (12h), %M minute, %S second, %p AM/PM.",
+            t("Leave empty to use the options above. %H hour (24h), %-I hour (12h), %M minute, %S second, %p AM/PM."),
         ));
 
         ui.add_space(10.0);
-        ui.heading("Date in the menu bar");
-        ui.radio_value(&mut c.date_mode, DateMode::Never, "Never");
-        ui.radio_value(&mut c.date_mode, DateMode::WhenDifferent, "Only when that region is on a different day than you");
-        ui.radio_value(&mut c.date_mode, DateMode::Always, "Always");
+        ui.heading(t("Date in the menu bar"));
+        ui.radio_value(&mut c.date_mode, DateMode::Never, t("Never"));
+        ui.radio_value(&mut c.date_mode, DateMode::WhenDifferent, t("Only when that region is on a different day than you"));
+        ui.radio_value(&mut c.date_mode, DateMode::Always, t("Always"));
         ui.add_enabled_ui(c.date_mode != DateMode::Never, |ui| {
             date_format_ui(ui, "date-format", &mut c.date_format);
         });
 
         ui.add_space(10.0);
-        ui.heading("Right-click menu");
-        ui.checkbox(&mut c.menu_show_dates, "Show dates");
-        ui.checkbox(&mut c.menu_show_offsets, "Show difference from your time");
+        ui.heading(t("Right-click menu"));
+        ui.checkbox(&mut c.menu_show_dates, t("Show dates"));
+        ui.checkbox(&mut c.menu_show_offsets, t("Show difference from your time"));
     }
 
     fn calendar_tab(&mut self, ui: &mut egui::Ui) {
         let c = &mut self.config;
 
-        ui.heading("Panel");
-        ui.label(weak("The panel opens when you click the clock in the menu bar."));
+        ui.heading(t("Panel"));
+        ui.label(weak(t("The panel opens when you click the clock in the menu bar.")));
         ui.horizontal(|ui| {
-            ui.label("Clicking the clock opens:");
-            ui.radio_value(&mut c.panel.left_click, ClickAction::Panel, "Clocks & calendar panel");
-            ui.radio_value(&mut c.panel.left_click, ClickAction::Menu, "Menu");
+            ui.label(t("Clicking the clock opens:"));
+            ui.radio_value(&mut c.panel.left_click, ClickAction::Panel, t("Clocks & calendar panel"));
+            ui.radio_value(&mut c.panel.left_click, ClickAction::Menu, t("Menu"));
         });
         ui.label(hint("Right-click always opens the menu (when the panel is chosen above)."));
         ui.add(egui::Slider::new(&mut c.panel.zoom, 0.7..=2.0).step_by(0.05).text("Panel size (zoom)"));
         ui.add(egui::Slider::new(&mut c.panel.width, 280.0..=600.0).step_by(10.0).text("Panel width (pt)"));
-        ui.checkbox(&mut c.panel.show_clocks, "Show every region's time");
-        ui.checkbox(&mut c.panel.show_time_slider, "Show the time slider (see other times across regions)");
-        ui.checkbox(&mut c.panel.show_calendar, "Show the month calendar and events");
+        ui.checkbox(&mut c.panel.show_clocks, t("Show every region's time"));
+        ui.checkbox(&mut c.panel.show_time_slider, t("Show the time slider (see other times across regions)"));
+        ui.checkbox(&mut c.panel.show_calendar, t("Show the month calendar and events"));
 
         ui.add_space(10.0);
-        ui.heading("Month view");
-        egui::ComboBox::from_label("Week starts on")
-            .selected_text(WEEKDAYS[c.calendar.first_weekday as usize % 7])
+        ui.heading(t("Month view"));
+        egui::ComboBox::from_label(t("Week starts on"))
+            .selected_text(t(WEEKDAYS[c.calendar.first_weekday as usize % 7]))
             .show_ui(ui, |ui| {
                 for (i, name) in WEEKDAYS.iter().enumerate() {
-                    ui.selectable_value(&mut c.calendar.first_weekday, i as u8, *name);
+                    ui.selectable_value(&mut c.calendar.first_weekday, i as u8, t(name));
                 }
             });
         let region_label = |tz: &str| -> String {
             if tz.is_empty() {
-                "Your time zone".into()
+                t("Your time zone").into()
             } else {
                 c.zones.iter().find(|z| z.tz == tz).map(|z| z.display_name()).unwrap_or_else(|| city_name(tz))
             }
@@ -414,29 +426,29 @@ impl SettingsApp {
         let current_region = region_label(&c.calendar.default_region);
         let zone_choices: Vec<(String, String)> =
             c.zones.iter().map(|z| (z.tz.clone(), format!("{} ({})", z.display_name(), z.city()))).collect();
-        egui::ComboBox::from_label("Calendar opens on")
+        egui::ComboBox::from_label(t("Calendar opens on"))
             .selected_text(current_region)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut c.calendar.default_region, String::new(), "Your time zone");
+                ui.selectable_value(&mut c.calendar.default_region, String::new(), t("Your time zone"));
                 for (tz, name) in zone_choices {
                     ui.selectable_value(&mut c.calendar.default_region, tz, name);
                 }
             });
-        ui.checkbox(&mut c.calendar.show_week_numbers, "Show week numbers");
-        ui.checkbox(&mut c.calendar.highlight_weekends, "Dim weekends");
-        ui.checkbox(&mut c.calendar.show_adjacent_months, "Show days from the previous and next month");
+        ui.checkbox(&mut c.calendar.show_week_numbers, t("Show week numbers"));
+        ui.checkbox(&mut c.calendar.highlight_weekends, t("Dim weekends"));
+        ui.checkbox(&mut c.calendar.show_adjacent_months, t("Show days from the previous and next month"));
         ui.label(hint("In the panel, click a region's clock (or its name above the calendar) to see that region's dates."));
 
         ui.add_space(10.0);
-        ui.heading("Events");
-        ui.checkbox(&mut c.calendar.show_events, "Show events from the Calendar app");
+        ui.heading(t("Events"));
+        ui.checkbox(&mut c.calendar.show_events, t("Show events from the Calendar app"));
         if !c.calendar.show_events {
             return;
         }
-        ui.label("Show each event's time in:");
-        ui.radio_value(&mut c.calendar.event_regions, EventRegions::All, "Every region");
-        ui.radio_value(&mut c.calendar.event_regions, EventRegions::MenuBar, "Regions shown in the menu bar");
-        ui.radio_value(&mut c.calendar.event_regions, EventRegions::Selected, "Only the region the calendar is showing");
+        ui.label(t("Show each event's time in:"));
+        ui.radio_value(&mut c.calendar.event_regions, EventRegions::All, t("Every region"));
+        ui.radio_value(&mut c.calendar.event_regions, EventRegions::MenuBar, t("Regions shown in the menu bar"));
+        ui.radio_value(&mut c.calendar.event_regions, EventRegions::Selected, t("Only the region the calendar is showing"));
         ui.add(egui::Slider::new(&mut c.calendar.upcoming_days, 0..=14).text("Upcoming days listed under the selected day"));
 
         ui.add_space(6.0);
@@ -444,9 +456,9 @@ impl SettingsApp {
             Access::Granted => {
                 let cals = self.calendars.get_or_insert_with(|| self.source.calendars());
                 if cals.is_empty() {
-                    ui.label(weak("No calendars found."));
+                    ui.label(weak(t("No calendars found.")));
                 } else {
-                    ui.label("Calendars to show:");
+                    ui.label(t("Calendars to show:"));
                 }
                 for cal in cals.iter() {
                     let mut shown = !c.calendar.hidden_calendars.contains(&cal.id);
@@ -462,21 +474,21 @@ impl SettingsApp {
                         }
                     });
                 }
-                if ui.small_button("Refresh list").clicked() {
+                if ui.small_button(t("Refresh list")).clicked() {
                     self.calendars = None;
                 }
             }
             Access::NotDetermined => {
-                ui.label(weak("TimeStrip needs permission to read your calendars."));
-                if ui.button("Allow access to calendars…").clicked() {
+                ui.label(weak(t("TimeStrip needs permission to read your calendars.")));
+                if ui.button(t("Allow access to calendars…")).clicked() {
                     self.source.request_access();
                 }
             }
             Access::Denied => {
                 ui.label(weak(
-                    "Calendar access is turned off. Turn it on in System Settings → Privacy & Security → Calendars.",
+                    t("Calendar access is turned off. Turn it on in System Settings → Privacy & Security → Calendars."),
                 ));
-                if cfg!(target_os = "macos") && ui.button("Open Privacy Settings").clicked() {
+                if cfg!(target_os = "macos") && ui.button(t("Open Privacy Settings")).clicked() {
                     let _ = std::process::Command::new("open")
                         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
                         .spawn();
@@ -488,31 +500,93 @@ impl SettingsApp {
         }
     }
 
+    fn language_tab(&mut self, ui: &mut egui::Ui) {
+        let now = Utc::now();
+        let c = &mut self.config;
+
+        ui.heading(t("Language"));
+        let lang_name = |code: &str, empty: &'static str| -> String {
+            if code.is_empty() {
+                t(empty).to_string()
+            } else {
+                i18n::LANGS.iter().find(|l| l.0 == code).map(|l| l.1.to_string()).unwrap_or_else(|| code.to_string())
+            }
+        };
+        let current = lang_name(&c.language, "Same as system");
+        egui::ComboBox::from_label(t("Interface language")).selected_text(current).show_ui(ui, |ui| {
+            ui.selectable_value(&mut c.language, String::new(), t("Same as system"));
+            for (code, native, _) in i18n::LANGS {
+                ui.selectable_value(&mut c.language, code.to_string(), native);
+            }
+        });
+        let current = lang_name(&c.date_language, "Same as interface");
+        egui::ComboBox::from_label(t("Language of weekday and month names")).selected_text(current).show_ui(ui, |ui| {
+            ui.selectable_value(&mut c.date_language, String::new(), t("Same as interface"));
+            for (code, native, _) in i18n::LANGS {
+                ui.selectable_value(&mut c.date_language, code.to_string(), native);
+            }
+        });
+        let local = clock::local_tz();
+        let example = format!(
+            "{}  ·  {}  ·  {}",
+            crate::calendar::long_date(now.with_timezone(&local).date_naive()),
+            clock::time_string(now, local, c),
+            crate::calendar::month_title(now.with_timezone(&local).year(), now.with_timezone(&local).month()),
+        );
+        ui.horizontal(|ui| {
+            ui.label(t("Example:"));
+            ui.label(RichText::new(example).strong());
+        });
+
+        ui.add_space(14.0);
+        ui.heading(t("Your time zone"));
+        ui.horizontal(|ui| {
+            ui.label(t("Your time zone (detected):"));
+            ui.label(RichText::new(clock::system_tz().name()).monospace());
+        });
+        let mut custom = !c.local_time_zone.is_empty();
+        if ui.checkbox(&mut custom, t("Use a different time zone for “Local”")).changed() {
+            c.local_time_zone = if custom { clock::system_tz().name().to_string() } else { String::new() };
+        }
+        if custom {
+            let selected = c.local_time_zone.clone();
+            egui::ComboBox::from_id_salt("local-tz")
+                .selected_text(selected.replace('_', " "))
+                .height(360.0)
+                .show_ui(ui, |ui| {
+                    for name in &self.all_zones {
+                        ui.selectable_value(&mut c.local_time_zone, name.to_string(), name.replace('_', " "));
+                    }
+                });
+        }
+        ui.label(hint(t("Time zones are set per region on the Regions tab.")));
+    }
+
     fn general_tab(&mut self, ui: &mut egui::Ui) {
         if login::supported() {
             let mut on = login::is_enabled();
-            if ui.checkbox(&mut on, "Open TimeStrip at login").changed() {
+            if ui.checkbox(&mut on, t("Open TimeStrip at login")).changed() {
                 if let Err(e) = login::set_enabled(on) {
-                    self.save_error = Some(format!("Couldn't change login setting: {e}"));
+                    self.save_error = Some(tf("Couldn't change login setting: {}", &[&e.to_string()]));
                 }
             }
             ui.add_space(8.0);
         }
-        ui.label("Settings are saved automatically to:");
+        ui.label(t("Settings are saved automatically to:"));
         ui.label(RichText::new(config::config_path().display().to_string()).monospace().small());
-        if ui.button("Show in Finder").clicked() {
+        if ui.button(t("Show in Finder")).clicked() {
             crate::tray::reveal(&config::config_path());
         }
         ui.add_space(8.0);
-        ui.label(weak("Tip: hold ⌘ and drag the clock in the menu bar to move it."));
+        ui.label(weak(t("Tip: hold ⌘ and drag the clock in the menu bar to move it.")));
     }
 }
 
 fn font_combo(ui: &mut egui::Ui, label: &str, id: impl std::hash::Hash + std::fmt::Debug, value: &mut String, families: &[String], filter: &str) {
     let fq = filter.trim().to_lowercase();
-    let current = if value.is_empty() { "System font".to_string() } else { value.clone() };
+    let current = if value.is_empty() { t("System font").to_string() } else { value.clone() };
     egui::ComboBox::new(id, label).selected_text(current).height(320.0).show_ui(ui, |ui| {
-        ui.selectable_value(value, String::new(), "System font");
+        ui.selectable_value(value, String::new(), t("System font"));
         for f in families.iter().filter(|f| fq.is_empty() || f.to_lowercase().contains(&fq)) {
             ui.selectable_value(value, f.clone(), f.as_str());
         }
@@ -522,16 +596,16 @@ fn font_combo(ui: &mut egui::Ui, label: &str, id: impl std::hash::Hash + std::fm
 fn date_format_ui(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, format: &mut String) {
     let now = Utc::now();
     let local = clock::local_tz();
-    egui::ComboBox::new(id, "Date format")
+    egui::ComboBox::new(id, t("Date format"))
         .selected_text(clock::date_string(now, local, format))
         .show_ui(ui, |ui| {
             for (pattern, name) in DATE_PRESETS {
                 let example = clock::date_string(now, local, pattern);
-                ui.selectable_value(format, pattern.to_string(), format!("{example}   ({name})"));
+                ui.selectable_value(format, pattern.to_string(), format!("{example}   ({})", t(name)));
             }
         });
     ui.horizontal(|ui| {
-        ui.label("or custom:");
+        ui.label(t("or custom:"));
         ui.add(egui::TextEdit::singleline(format).desired_width(120.0));
     });
     ui.label(hint("%a weekday, %b month, %-d day, %-m month number, %Y year."));
@@ -550,21 +624,21 @@ fn zone_style_ui(ui: &mut egui::Ui, s: &mut ZoneStyle, g: &Config, families: &[S
     ui.label(hint("Tick a setting to override it for this region only."));
 
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Text size", &mut s.font_size, g.font_size) {
+        if override_toggle(ui, t("Text size"), &mut s.font_size, g.font_size) {
             if let Some(v) = s.font_size.as_mut() {
                 ui.add(egui::Slider::new(v, 8.0..=40.0).step_by(0.5).suffix(" pt"));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Font", &mut s.font_family, g.font_family.clone()) {
+        if override_toggle(ui, t("Font"), &mut s.font_family, g.font_family.clone()) {
             if let Some(v) = s.font_family.as_mut() {
                 font_combo(ui, "", ("zone-font", i), v, families, "");
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Weight", &mut s.font_weight, g.font_weight) {
+        if override_toggle(ui, t("Weight"), &mut s.font_weight, g.font_weight) {
             if let Some(v) = s.font_weight.as_mut() {
                 let name = weight_name(*v);
                 ui.add(egui::Slider::new(v, 100..=900).step_by(100.0).text(name));
@@ -572,62 +646,62 @@ fn zone_style_ui(ui: &mut egui::Ui, s: &mut ZoneStyle, g: &Config, families: &[S
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Color", &mut s.color, g.color) {
+        if override_toggle(ui, t("Color"), &mut s.color, g.color) {
             if let Some(v) = s.color.as_mut() {
                 ui.color_edit_button_srgb(v);
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Label", &mut s.show_label, g.show_labels) {
+        if override_toggle(ui, t("Label"), &mut s.show_label, g.show_labels) {
             if let Some(v) = s.show_label.as_mut() {
-                ui.checkbox(v, "show");
+                ui.checkbox(v, t("show"));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "24-hour", &mut s.use_24h, g.use_24h) {
+        if override_toggle(ui, t("24-hour"), &mut s.use_24h, g.use_24h) {
             if let Some(v) = s.use_24h.as_mut() {
-                ui.checkbox(v, "on");
+                ui.checkbox(v, t("on"));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "AM/PM", &mut s.show_ampm, g.show_ampm) {
+        if override_toggle(ui, t("AM/PM"), &mut s.show_ampm, g.show_ampm) {
             if let Some(v) = s.show_ampm.as_mut() {
-                ui.checkbox(v, "show");
+                ui.checkbox(v, t("show"));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Seconds", &mut s.show_seconds, g.show_seconds) {
+        if override_toggle(ui, t("Seconds"), &mut s.show_seconds, g.show_seconds) {
             if let Some(v) = s.show_seconds.as_mut() {
-                ui.checkbox(v, "show");
+                ui.checkbox(v, t("show"));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Time format", &mut s.custom_time_format, clock::time_pattern(g)) {
+        if override_toggle(ui, t("Time format"), &mut s.custom_time_format, clock::time_pattern(g)) {
             if let Some(v) = s.custom_time_format.as_mut() {
                 ui.add(egui::TextEdit::singleline(v).desired_width(110.0));
             }
         }
     });
     ui.horizontal(|ui| {
-        if override_toggle(ui, "Date", &mut s.date_mode, g.date_mode) {
+        if override_toggle(ui, t("Date"), &mut s.date_mode, g.date_mode) {
             if let Some(v) = s.date_mode.as_mut() {
-                ui.radio_value(v, DateMode::Never, "never");
-                ui.radio_value(v, DateMode::WhenDifferent, "when different");
-                ui.radio_value(v, DateMode::Always, "always");
+                ui.radio_value(v, DateMode::Never, t("never"));
+                ui.radio_value(v, DateMode::WhenDifferent, t("when different"));
+                ui.radio_value(v, DateMode::Always, t("always"));
             }
         }
     });
-    if override_toggle(ui, "Date format", &mut s.date_format, g.date_format.clone()) {
+    if override_toggle(ui, t("Date format"), &mut s.date_format, g.date_format.clone()) {
         if let Some(v) = s.date_format.as_mut() {
             ui.indent(("zone-date-format", i), |ui| date_format_ui(ui, ("zone-date", i), v));
         }
     }
-    if !s.is_empty() && ui.small_button("Clear all overrides").clicked() {
+    if !s.is_empty() && ui.small_button(t("Clear all overrides")).clicked() {
         *s = ZoneStyle::default();
     }
 }

@@ -3,6 +3,7 @@
 
 use crate::clock;
 use crate::config::{self, ClickAction, Config};
+use crate::i18n::t;
 use crate::login;
 use crate::render::Renderer;
 use chrono::Utc;
@@ -238,9 +239,11 @@ impl App {
             self.config_mtime = mtime;
             let fresh = config::load();
             if fresh != self.config {
-                let zones_changed = fresh.zones != self.config.zones;
+                let menu_changed = fresh.zones != self.config.zones
+                    || fresh.language != self.config.language
+                    || fresh.date_language != self.config.date_language;
                 self.config = fresh;
-                if zones_changed {
+                if menu_changed {
                     self.rebuild_menu();
                 }
                 self.tray.set_show_menu_on_left_click(self.config.panel.left_click == ClickAction::Menu);
@@ -388,27 +391,27 @@ fn build_menu(c: &Config) -> (Menu, MenuItems) {
         let _ = menu.append(item);
     }
     if zones.is_empty() {
-        let _ = menu.append(&MenuItem::new("No clocks yet — add some in Settings", false, None));
+        let _ = menu.append(&MenuItem::new(t("No regions yet — add some in Settings"), false, None));
     }
     let _ = menu.append(&PredefinedMenuItem::separator());
 
-    let open_panel = MenuItem::new("Show Clocks & Calendar", true, None);
-    let copy_all = MenuItem::new("Copy All Times", true, None);
-    let settings = MenuItem::new("Settings…", true, None);
-    let edit_file = MenuItem::new("Show Config File", true, None);
+    let open_panel = MenuItem::new(t("Show Clocks & Calendar"), true, None);
+    let copy_all = MenuItem::new(t("Copy All Times"), true, None);
+    let settings = MenuItem::new(t("Settings…"), true, None);
+    let edit_file = MenuItem::new(t("Show Config File"), true, None);
     let _ = menu.append(&open_panel);
     let _ = menu.append(&copy_all);
     let _ = menu.append(&settings);
     let _ = menu.append(&edit_file);
 
     let login = login::supported().then(|| {
-        let item = CheckMenuItem::new("Open at Login", true, login::is_enabled(), None);
+        let item = CheckMenuItem::new(t("Open at Login"), true, login::is_enabled(), None);
         let _ = menu.append(&item);
         item
     });
 
     let _ = menu.append(&PredefinedMenuItem::separator());
-    let quit = MenuItem::new("Quit TimeStrip", true, None);
+    let quit = MenuItem::new(t("Quit TimeStrip"), true, None);
     let _ = menu.append(&quit);
 
     (menu, MenuItems { zones, open_panel, copy_all, settings, edit_file, login, quit })

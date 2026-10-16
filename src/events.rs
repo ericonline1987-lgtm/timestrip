@@ -107,7 +107,7 @@ mod imp {
             } else if s == EKAuthorizationStatus::NotDetermined {
                 if !in_app_bundle() {
                     Access::Unavailable(
-                        "Calendar events need the TimeStrip.app bundle (see README → Build it yourself).".into(),
+                        crate::i18n::t("Calendar events need the TimeStrip.app bundle (see README → Build it yourself).").into(),
                     )
                 } else if self.requested && self.answered.load(Ordering::Relaxed) {
                     // Answered, but the status hasn't caught up yet; check again next frame.
@@ -219,7 +219,7 @@ mod imp {
             EventSource
         }
         pub fn access(&mut self) -> Access {
-            Access::Unavailable("Calendar events are only supported on macOS.".into())
+            Access::Unavailable(crate::i18n::t("Calendar events are only supported on macOS.").into())
         }
         pub fn request_access(&mut self) {}
         pub fn take_answer(&mut self) -> bool {
