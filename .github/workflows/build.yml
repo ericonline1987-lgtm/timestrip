@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -21,8 +21,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Build
+        run: cargo build --all-targets --message-format=short 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+
       - name: Test
-        run: cargo test
+        run: cargo test 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+
+      # Surface compiler/test output as annotations so it's readable without the raw logs.
+      - name: Report errors
+        if: failure()
+        run: |
+          for f in build.log test.log; do
+            [ -f "$f" ] || continue
+            body=$(grep -vE '^\s*(Compiling|Downloaded|Downloading|Checking|Fresh|Locking|Adding|Updating)\b' "$f" | tail -c 60000 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$f::$body"
+          done
 
       - name: Build TimeStrip.app (universal)
         run: scripts/bundle-macos.sh --universal
