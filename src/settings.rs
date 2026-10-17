@@ -2,8 +2,8 @@
 //! pick it up within a second, so you can watch the real menu bar while you tweak.
 
 use crate::clock;
-use crate::config::{self, city_name, ClickAction, Config, DateMode, EventRegions, Layout, Zone, ZoneStyle};
-use crate::events::{Access, CalendarInfo, EventSource};
+use crate::config::{self, city_name, CalendarConfig, ClickAction, Config, DateMode, EventRegions, Layout, Zone, ZoneStyle};
+use crate::events::{self, Access, CalendarInfo, EventSource};
 use crate::i18n::{self, t, tf};
 use crate::login;
 use crate::render::{Renderer, SCALE};
@@ -34,6 +34,9 @@ struct SettingsApp {
     preview: Option<(String, TextureHandle, TextureHandle)>,
     source: EventSource,
     calendars: Option<Vec<CalendarInfo>>,
+    holiday_region: String,
+    subscription_url: String,
+    subscription_error: Option<String>,
 }
 
 pub fn run() -> eframe::Result {
@@ -60,6 +63,9 @@ pub fn run() -> eframe::Result {
         preview: None,
         source: EventSource::new(),
         calendars: None,
+        holiday_region: String::new(),
+        subscription_url: String::new(),
+        subscription_error: None,
     };
     eframe::run_ui_native("TimeStrip Settings", options, move |ui, _frame| app.ui(ui))
 }
@@ -190,6 +196,8 @@ impl SettingsApp {
     }
 
     fn clocks_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(weak("Use the arrows to set the menu bar and expanded clock order. Only checked regions appear in the menu bar; the panel includes every region."));
+        ui.label(hint("Open a region's style settings for its own time/date format, or use Time & Date for shared defaults."));
         ui.label(weak(t(
             t("Each region can have its own label, size, font, color and time format. Anything not set here uses the Appearance and Time & Date tabs."),
         )));
@@ -209,10 +217,10 @@ impl SettingsApp {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(i > 0, egui::Button::new("▲").small()).clicked() {
+                    if ui.add_enabled(i > 0, egui::Button::new("▲").small()).on_hover_text("Move region up").clicked() {
                         action = Some(Action::Up(i));
                     }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new("▼").small()).clicked() {
+                    if ui.add_enabled(i + 1 < count, egui::Button::new("▼").small()).on_hover_text("Move region down").clicked() {
                         action = Some(Action::Down(i));
                     }
                     let city = z.city();
@@ -225,7 +233,7 @@ impl SettingsApp {
                         if ui.button(t("Remove")).clicked() {
                             action = Some(Action::Remove(i));
                         }
-                        ui.checkbox(&mut z.show_in_bar, t("Menu bar"));
+                        ui.checkbox(&mut z.show_in_bar, "Show in menu bar");
                     });
                 });
                 let title = if z.style.is_empty() {
@@ -391,6 +399,12 @@ impl SettingsApp {
     }
 
     fn calendar_tab(&mut self, ui: &mut egui::Ui) {
+        let region_choices: Vec<(String, String)> = self.config.calendar_regions().into_iter().map(|key| {
+            let label = if key.is_empty() { t("Local").into() } else {
+                self.config.zones.iter().find(|z| z.tz == key).unwrap().display_name()
+            };
+            (key, label)
+        }).collect();
         let c = &mut self.config;
 
         ui.heading(t("Panel"));
@@ -439,10 +453,26 @@ impl SettingsApp {
         ui.checkbox(&mut c.calendar.show_adjacent_months, t("Show days from the previous and next month"));
         ui.label(hint("In the panel, click a region's clock (or its name above the calendar) to see that region's dates."));
 
+        calendar_order_ui(ui, &mut c.calendar, &region_choices);
+
+        ui.add_space(10.0);
+        ui.heading("Add a holiday source");
+        ui.label(hint("Enter an ICS subscription URL, confirm in Calendar, then return and refresh the list below."));
+        ui.add(egui::TextEdit::singleline(&mut self.subscription_url)
+            .hint_text("https://example.com/holidays.ics or webcal://...")
+            .desired_width(f32::INFINITY));
+        if ui.add_enabled(!self.subscription_url.trim().is_empty(), egui::Button::new("Subscribe in Calendar…")).clicked() {
+            self.subscription_error = events::subscribe(&self.subscription_url).err();
+        }
+        if let Some(error) = &self.subscription_error {
+            ui.colored_label(Color32::from_rgb(220, 60, 60), error);
+        }
+
         ui.add_space(10.0);
         ui.heading(t("Events"));
         ui.checkbox(&mut c.calendar.show_events, t("Show events from the Calendar app"));
         if !c.calendar.show_events {
+            ui.label(hint("Enable calendar events to choose and display holiday sources."));
             return;
         }
         ui.label(t("Show each event's time in:"));
@@ -460,7 +490,7 @@ impl SettingsApp {
                 } else {
                     ui.label(t("Calendars to show:"));
                 }
-                for cal in cals.iter() {
+                for cal in cals.iter().filter(|cal| !c.calendar.holiday_calendars.values().any(|ids| ids.contains(&cal.id))) {
                     let mut shown = !c.calendar.hidden_calendars.contains(&cal.id);
                     ui.horizontal(|ui| {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
@@ -474,7 +504,9 @@ impl SettingsApp {
                         }
                     });
                 }
+                holiday_sources_ui(ui, &mut c.calendar, cals, &region_choices, &mut self.holiday_region);
                 if ui.small_button(t("Refresh list")).clicked() {
+                    self.source = EventSource::new();
                     self.calendars = None;
                 }
             }
@@ -579,6 +611,73 @@ impl SettingsApp {
         }
         ui.add_space(8.0);
         ui.label(weak(t("Tip: hold ⌘ and drag the clock in the menu bar to move it.")));
+    }
+}
+
+fn calendar_order_ui(ui: &mut egui::Ui, config: &mut CalendarConfig, choices: &[(String, String)]) {
+    ui.add_space(10.0);
+    ui.heading("Calendar region order");
+    ui.label(hint("Independent of the menu bar and expanded clocks. Local can also be moved."));
+    let mut order: Vec<String> = choices.iter().map(|(key, _)| key.clone()).collect();
+    let mut moved = None;
+    for (i, (_, label)) in choices.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if ui.add_enabled(i > 0, egui::Button::new("▲").small()).on_hover_text("Move calendar region up").clicked() {
+                moved = Some((i, i - 1));
+            }
+            if ui.add_enabled(i + 1 < order.len(), egui::Button::new("▼").small()).on_hover_text("Move calendar region down").clicked() {
+                moved = Some((i, i + 1));
+            }
+            ui.label(label);
+        });
+    }
+    if let Some((from, to)) = moved {
+        order.swap(from, to);
+        config.region_order = order;
+    }
+    if ui.small_button("Follow clock order").clicked() {
+        config.region_order.clear();
+    }
+}
+
+fn holiday_sources_ui(ui: &mut egui::Ui, config: &mut CalendarConfig, calendars: &[CalendarInfo], choices: &[(String, String)], region: &mut String) {
+    ui.add_space(10.0);
+    ui.heading("Holiday sources by region");
+    ui.label(hint("Selected sources appear only in their associated regions, with names and colored date markers. A source can be linked to several regions."));
+    if !choices.iter().any(|(key, _)| key == region) {
+        region.clear();
+    }
+    let selected_label = &choices.iter().find(|(key, _)| key == region).unwrap().1;
+    egui::ComboBox::from_label("Region for holiday sources").selected_text(selected_label).show_ui(ui, |ui| {
+        for (key, label) in choices {
+            ui.selectable_value(region, key.clone(), label);
+        }
+    });
+    let mut linked = config.holiday_calendars.get(region).cloned().unwrap_or_default();
+    for cal in calendars {
+        let mut selected = linked.contains(&cal.id);
+        if ui.checkbox(&mut selected, &cal.title).changed() {
+            if selected {
+                linked.push(cal.id.clone());
+                // Removing the last association must not expose the source in every region.
+                if !config.hidden_calendars.contains(&cal.id) {
+                    config.hidden_calendars.push(cal.id.clone());
+                }
+            } else {
+                linked.retain(|id| *id != cal.id);
+            }
+        }
+    }
+    for id in linked.iter().filter(|id| !calendars.iter().any(|cal| cal.id == **id)) {
+        ui.label(hint(format!("Linked source unavailable: {id}. Restore the calendar or clear the links.")));
+    }
+    if !linked.is_empty() && ui.small_button("Clear holiday links for this region").clicked() {
+        linked.clear();
+    }
+    if linked.is_empty() {
+        config.holiday_calendars.remove(region);
+    } else {
+        config.holiday_calendars.insert(region.clone(), linked);
     }
 }
 
@@ -703,5 +802,65 @@ fn zone_style_ui(ui: &mut egui::Ui, s: &mut ZoneStyle, g: &Config, families: &[S
     }
     if !s.is_empty() && ui.small_button(t("Clear all overrides")).clicked() {
         *s = ZoneStyle::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, show: impl FnMut(&mut egui::Ui)) -> Vec<(String, egui::Pos2)> {
+        let mut output = ctx.run_ui(egui::RawInput { events, ..Default::default() }, show);
+        // Headless UI tests intentionally consume no GPU textures.
+        output.textures_delta.clear();
+        output.shapes.iter().filter_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                Some((text.galley.text().to_string(), text.pos + text.galley.size() / 2.0))
+            } else { None }
+        }).collect()
+    }
+
+    fn click(ctx: &egui::Context, pos: egui::Pos2, mut show: impl FnMut(&mut egui::Ui)) {
+        for pressed in [true, false] {
+            frame(ctx, vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton {
+                pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
+            }], &mut show);
+        }
+    }
+
+    #[test]
+    fn calendar_order_controls_move_local_and_restore_clock_order() {
+        let ctx = egui::Context::default();
+        let mut config = CalendarConfig::default();
+        let choices = vec![(String::new(), "Local".into()), ("Asia/Tokyo".into(), "TYO".into())];
+        let text = frame(&ctx, vec![], |ui| calendar_order_ui(ui, &mut config, &choices));
+        let down = text.iter().find(|(label, _)| label == "▼").unwrap().1;
+        click(&ctx, down, |ui| calendar_order_ui(ui, &mut config, &choices));
+        assert_eq!(config.region_order, vec!["Asia/Tokyo", ""]);
+        let text = frame(&ctx, vec![], |ui| calendar_order_ui(ui, &mut config, &choices));
+        let reset = text.iter().find(|(label, _)| label == "Follow clock order").unwrap().1;
+        click(&ctx, reset, |ui| calendar_order_ui(ui, &mut config, &choices));
+        assert!(config.region_order.is_empty());
+    }
+
+    #[test]
+    fn holiday_controls_link_and_unlink_without_leaking_to_other_regions() {
+        let ctx = egui::Context::default();
+        let mut config = CalendarConfig::default();
+        let calendars = vec![CalendarInfo { id: "cn".into(), title: "China Holidays".into(), color: [255, 0, 0] }];
+        let choices = vec![(String::new(), "Local".into()), ("Asia/Shanghai".into(), "SHA".into())];
+        let mut region = "Asia/Shanghai".to_string();
+        let text = frame(&ctx, vec![], |ui| holiday_sources_ui(ui, &mut config, &calendars, &choices, &mut region));
+        assert!(config.holiday_calendars.is_empty(), "viewing settings must not add links");
+        let source = text.iter().find(|(label, _)| label == "China Holidays").unwrap().1;
+        click(&ctx, source, |ui| holiday_sources_ui(ui, &mut config, &calendars, &choices, &mut region));
+        assert!(events::visible_in_region("cn", "Asia/Shanghai", &config));
+        assert!(!events::visible_in_region("cn", "", &config));
+        let text = frame(&ctx, vec![], |ui| holiday_sources_ui(ui, &mut config, &calendars, &choices, &mut region));
+        let source = text.iter().find(|(label, _)| label == "China Holidays").unwrap().1;
+        click(&ctx, source, |ui| holiday_sources_ui(ui, &mut config, &calendars, &choices, &mut region));
+        assert!(config.holiday_calendars.is_empty());
+        assert!(!events::visible_in_region("cn", "Asia/Shanghai", &config));
+        assert!(!events::visible_in_region("cn", "", &config));
     }
 }

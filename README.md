@@ -12,6 +12,8 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 
 **Menu bar**
 - Any number of regions; pick which ones appear in the bar
+- Move regions up or down in Settings → Regions; uncheck **Show in menu bar** to keep
+  a region available in the expanded panel without pinning it to the bar
 - Your own short labels (`NYC`, `Mum`, `HQ`…)
 - Text size from 8 to 40 pt, any installed font, weights from Thin to Black
 - Single-line or stacked layout (small label above a larger time)
@@ -33,6 +35,10 @@ Make your home office big and bold and the rest small and dim.
 - Your Calendar app events, with colored dots on busy days; each event shows its time in
   the selected region and in your other regions (e.g. `NYC 8:00 PM · TYO 9:00 AM Fri`)
 - An upcoming-days list, and buttons for Settings and the Calendar app
+- Independently reorder the calendar's region tabs, including Local, in Settings →
+  Calendar & Panel → Calendar region order
+- Link holiday calendars to one or more regions; their colored date markers, hover
+  titles and event names follow the selected region
 
 **Right-click menu** — every region's time, date and offset (click to copy), Copy All
 Times, Show Clocks & Calendar, Settings…, Open at Login, Quit.
@@ -102,6 +108,26 @@ Everything in the settings window is stored in a JSON file you can also edit by 
 Any setting you leave out uses its default. Time zones use
 [IANA names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones); time and
 date formats use [strftime syntax](https://docs.rs/chrono/latest/chrono/format/strftime/index.html).
+
+### Holiday sources and calendar order
+
+In **Calendar & Panel → Add a holiday source**, paste an `https://`, `http://`, or
+`webcal://` ICS subscription URL and click **Subscribe in Calendar…**. Complete the
+confirmation in macOS Calendar, return to TimeStrip and click **Refresh list**.
+Calendar manages subscription updates and recurring events. You can also use holiday
+calendars already present in Calendar, such as US Holidays or China Holidays.
+
+Enable **Show events from the Calendar app** and grant calendar access, then use
+**Holiday sources by region** to choose the region and check its sources. A linked
+source appears only in its associated regions; ordinary calendars still use the
+**Calendars to show** selection. Unlinking a source leaves it hidden from ordinary
+events until you explicitly enable it there. All-day holidays retain their dates
+when switching regions, including when Local uses a custom time zone.
+
+The `calendar.region_order` array stores IANA zone names, with `""` representing
+Local. Missing regions are appended automatically. `calendar.holiday_calendars`
+maps the same region keys to arrays of macOS calendar identifiers. These optional
+fields preserve older configs; **Follow clock order** restores the default tab order.
 
 ## Notes
 

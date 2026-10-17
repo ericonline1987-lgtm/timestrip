@@ -237,4 +237,20 @@ mod tests {
         assert!(names.contains(&"Asia/Tokyo"));
         assert!(names.len() > 300);
     }
+
+    #[test]
+    fn menu_bar_order_visibility_and_custom_formats() {
+        let mut c = Config::default();
+        c.zones.swap(0, 2);
+        c.zones[1].show_in_bar = false;
+        c.custom_time_format = "%H.%M".into();
+        c.zones[0].style.custom_time_format = Some("%H:%M:%S".into());
+        let shown = segments(at(2026, 10, 16, 0, 35), Tz::UTC, &c);
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0].label.as_deref(), Some("TYO"));
+        assert_eq!(shown[0].time, "09:35:00");
+        assert_eq!(shown[1].label.as_deref(), Some("NYC"));
+        assert_eq!(shown[1].time, "20.35");
+        assert_eq!(c.zones.len(), 3);
+    }
 }

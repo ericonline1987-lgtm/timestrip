@@ -125,12 +125,19 @@ impl PanelApp {
         let m = config::modified_time();
         if m != self.config_mtime {
             self.config_mtime = m;
-            self.config = config::load();
-            if self.region.is_some_and(|i| i >= self.config.zones.len()) {
-                self.region = None;
-            }
-            self.events_fetched = None;
+            self.apply_config(config::load());
         }
+    }
+
+    fn apply_config(&mut self, config: Config) {
+        let selected_zone = self.region.and_then(|i| self.config.zones.get(i)).map(|z| z.tz.clone());
+        let was_today = self.selected == self.today(self.region);
+        self.config = config;
+        self.region = selected_zone.and_then(|tz| self.config.zones.iter().position(|z| z.tz == tz));
+        if was_today {
+            self.go_to_today();
+        }
+        self.events_fetched = None;
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -293,7 +300,9 @@ impl PanelApp {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(t("Calendar for")).small().weak());
             let mut choice = self.region;
-            let options: Vec<Region> = std::iter::once(None).chain((0..self.config.zones.len()).map(Some)).collect();
+            let options: Vec<Region> = self.config.calendar_regions().iter().map(|key| {
+                self.config.zones.iter().position(|z| !key.is_empty() && z.tz == *key)
+            }).collect();
             for r in options {
                 if ui.selectable_label(choice == r, self.region_name(r)).clicked() {
                     choice = r;
@@ -328,7 +337,8 @@ impl PanelApp {
         self.ensure_events(&grid);
 
         let tz = self.region_tz(self.region);
-        let local = self.local();
+        // EventKit's floating all-day dates use the system zone, not the Local override.
+        let local = clock::system_tz();
         let today = self.today(self.region);
         let cols = if cal.show_week_numbers { 8 } else { 7 };
         let cell_w = (ui.available_width() / cols as f32).floor();
@@ -396,7 +406,8 @@ impl PanelApp {
 
                     // Up to three dots, one per calendar color, for days with events.
                     let mut colors: Vec<[u8; 3]> = Vec::new();
-                    for e in self.events.iter().filter(|e| events::on_day(e, day, tz, local)) {
+                    let day_events: Vec<&Event> = self.events.iter().filter(|e| events::on_day(e, day, tz, local)).collect();
+                    for e in &day_events {
                         if !colors.contains(&e.color) {
                             colors.push(e.color);
                         }
@@ -411,6 +422,9 @@ impl PanelApp {
                     }
                     if resp.clicked() {
                         clicked = Some(day);
+                    }
+                    if !day_events.is_empty() {
+                        resp.on_hover_text(day_events.iter().map(|e| format!("{} · {}", e.title, e.calendar_title)).collect::<Vec<_>>().join("\n"));
                     }
                 }
             });
@@ -435,14 +449,16 @@ impl PanelApp {
         let upcoming_end = Utc::now().date_naive() + Duration::days(self.config.calendar.upcoming_days as i64 + 2);
         let last = last_grid.max(upcoming_end);
         let first = first.min(Utc::now().date_naive() - Duration::days(1));
-        let key = format!("{first}{last}{:?}", self.config.calendar.hidden_calendars);
+        let region_key = self.region.and_then(|i| self.config.zones.get(i)).map(|z| z.tz.as_str()).unwrap_or("");
+        let key = format!("{first}{last}{region_key}{:?}", self.config.calendar);
         let fresh = self.events_fetched.is_some_and(|t| t.elapsed().as_secs() < 60);
         if key == self.events_key && fresh {
             return;
         }
         let start = Utc.from_utc_datetime(&first.and_hms_opt(0, 0, 0).unwrap());
         let end = Utc.from_utc_datetime(&last.and_hms_opt(0, 0, 0).unwrap());
-        self.events = self.source.events(start, end, &self.config.calendar.hidden_calendars);
+        self.events = self.source.events(start, end, &[]);
+        self.events.retain(|event| events::visible_in_region(&event.calendar_id, region_key, &self.config.calendar));
         self.events_key = key;
         self.events_fetched = Some(Instant::now());
     }
@@ -478,7 +494,7 @@ impl PanelApp {
         }
 
         let tz = self.region_tz(self.region);
-        let local = self.local();
+        let local = clock::system_tz();
         let day = self.selected;
         let heading = format!("{} · {}", calendar::long_date(day), self.region_name(self.region));
         ui.label(RichText::new(heading).strong());
@@ -531,6 +547,7 @@ impl PanelApp {
             ui.painter().rect_filled(bar, 1.5, color);
             ui.vertical(|ui| {
                 ui.label(RichText::new(&e.title).strong());
+                ui.label(RichText::new(&e.calendar_title).small().weak());
                 let main = if e.all_day {
                     t("All day").to_string()
                 } else {
@@ -573,6 +590,45 @@ impl PanelApp {
             format!("{t} {}", clock::date_string(e.start, tz, "%a"))
         } else {
             t
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_calendar_survives_reordering_and_falls_back_on_removal() {
+        let mut config = Config::default();
+        config.calendar.default_region = "America/New_York".into();
+        let mut app = PanelApp::new(config.clone());
+        config.zones.swap(0, 2);
+        app.apply_config(config.clone());
+        assert_eq!(app.region, Some(2));
+        assert_eq!(app.region_tz(app.region), chrono_tz::America::New_York);
+        config.zones.pop();
+        app.apply_config(config);
+        assert_eq!(app.region, None);
+    }
+
+    #[test]
+    fn expanded_clocks_render_every_region_even_when_all_are_unpinned() {
+        let mut config = Config::default();
+        for zone in &mut config.zones {
+            zone.show_in_bar = false;
+        }
+        let mut app = PanelApp::new(config);
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            app.clocks(ui, Utc.with_ymd_and_hms(2026, 10, 16, 0, 35, 0).unwrap());
+        });
+        // This headless render has no GPU backend to consume texture updates.
+        output.textures_delta.clear();
+        let text: Vec<String> = output.shapes.iter().filter_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape { Some(text.galley.text().to_string()) } else { None }
+        }).collect();
+        for label in ["Local", "NYC", "LON", "TYO"] {
+            assert!(text.iter().any(|text| text == label), "missing expanded clock: {label}");
         }
     }
 }

@@ -4,6 +4,7 @@
 //! Every field has a default, so older or hand-trimmed files keep working.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -115,6 +116,10 @@ pub struct CalendarConfig {
     pub show_adjacent_months: bool,
     /// Region the calendar opens on: an IANA name, or empty for your own time zone.
     pub default_region: String,
+    /// Independent region-tab order. Empty string means Local; omitted regions follow.
+    pub region_order: Vec<String>,
+    /// Calendar identifiers used as holiday sources, keyed by region (empty = Local).
+    pub holiday_calendars: BTreeMap<String, Vec<String>>,
     /// Read events from the macOS Calendar app.
     pub show_events: bool,
     /// Calendar identifiers you've turned off.
@@ -132,6 +137,8 @@ impl Default for CalendarConfig {
             highlight_weekends: true,
             show_adjacent_months: true,
             default_region: String::new(),
+            region_order: Vec::new(),
+            holiday_calendars: BTreeMap::new(),
             show_events: true,
             hidden_calendars: Vec::new(),
             event_regions: EventRegions::All,
@@ -268,6 +275,18 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Calendar tabs always include Local and every configured region, once each.
+    pub fn calendar_regions(&self) -> Vec<String> {
+        let available = std::iter::once(String::new()).chain(self.zones.iter().map(|z| z.tz.clone()));
+        let mut order = Vec::new();
+        for key in self.calendar.region_order.iter().cloned().chain(available) {
+            if (key.is_empty() || self.zones.iter().any(|z| z.tz == key)) && !order.contains(&key) {
+                order.push(key);
+            }
+        }
+        order
+    }
+
     /// Default menu bar appearance, keeping clocks, per-region styles, panel and calendar settings.
     pub fn reset_appearance(&mut self) {
         let keep = std::mem::take(self);
@@ -394,12 +413,16 @@ mod tests {
         assert_eq!(c.date_mode, DateMode::WhenDifferent);
         assert_eq!(c.calendar.first_weekday, 1);
         assert!(c.calendar.show_events);
+        assert!(c.calendar.region_order.is_empty());
+        assert!(c.calendar.holiday_calendars.is_empty());
     }
 
     #[test]
     fn round_trip() {
         let mut c = Config::default();
         c.zones[0].style.font_size = Some(18.0);
+        c.calendar.region_order = vec!["Asia/Tokyo".into(), String::new()];
+        c.calendar.holiday_calendars.insert("Asia/Tokyo".into(), vec!["holidays".into()]);
         let s = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<Config>(&s).unwrap(), c);
     }
@@ -422,5 +445,16 @@ mod tests {
         assert_eq!(city_name("America/Los_Angeles"), "Los Angeles");
         assert_eq!(city_name("America/Argentina/Buenos_Aires"), "Buenos Aires");
         assert_eq!(city_name("UTC"), "UTC");
+    }
+
+    #[test]
+    fn calendar_order_is_independent_and_keeps_all_regions() {
+        let mut c = Config::default();
+        c.calendar.region_order = vec!["Asia/Tokyo".into(), "removed".into(), "Asia/Tokyo".into()];
+        c.zones[0].show_in_bar = false;
+        c.zones.swap(0, 1);
+        assert_eq!(c.calendar_regions(), vec!["Asia/Tokyo", "", "Europe/London", "America/New_York"]);
+        c.zones.retain(|z| z.tz != "Asia/Tokyo");
+        assert_eq!(c.calendar_regions(), vec!["", "Europe/London", "America/New_York"]);
     }
 }

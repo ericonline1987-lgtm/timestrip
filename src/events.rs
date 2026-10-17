@@ -1,6 +1,48 @@
 //! Reads events from the macOS Calendar database (EventKit). Read-only.
 
 use chrono::{DateTime, Utc};
+use crate::config::CalendarConfig;
+
+/// Holiday sources are shown only in their associated regions. Other calendars keep
+/// using the ordinary visibility setting, including when no associations exist.
+pub fn visible_in_region(calendar_id: &str, region: &str, config: &CalendarConfig) -> bool {
+    if !config.show_events {
+        return false;
+    }
+    if config.holiday_calendars.values().any(|ids| ids.iter().any(|id| id == calendar_id)) {
+        config.holiday_calendars.get(region).is_some_and(|ids| ids.iter().any(|id| id == calendar_id))
+    } else {
+        !config.hidden_calendars.iter().any(|id| id == calendar_id)
+    }
+}
+
+/// Calendar handles subscription confirmation, refresh, and recurrence expansion.
+pub fn subscription_url(input: &str) -> Result<url::Url, String> {
+    let input = input.trim();
+    let url = url::Url::parse(input).map_err(|_| "Enter a valid calendar URL.".to_string())?;
+    if !matches!(url.scheme(), "https" | "http" | "webcal")
+        || url.host_str().is_none_or(str::is_empty)
+        || input.chars().any(char::is_whitespace)
+    {
+        return Err("Use an https://, http://, or webcal:// calendar URL.".into());
+    }
+    Ok(url)
+}
+
+pub fn subscribe(input: &str) -> Result<(), String> {
+    let url = subscription_url(input)?;
+    if !cfg!(target_os = "macos") {
+        return Err("Calendar subscriptions are only supported on macOS.".into());
+    }
+    let status = std::process::Command::new("open")
+        .args(["-a", "Calendar", url.as_str()])
+        .status()
+        .map_err(|e| format!("Couldn't open Calendar: {e}"))?;
+    if !status.success() {
+        return Err("Couldn't open the subscription in Calendar.".into());
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
@@ -299,5 +341,35 @@ mod tests {
         let fri = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap();
         assert!(on_day(&e, thu, chrono_tz::Asia::Tokyo, la));
         assert!(!on_day(&e, fri, chrono_tz::Asia::Tokyo, la));
+    }
+
+    #[test]
+    fn holiday_sources_follow_region_associations() {
+        let mut config = CalendarConfig::default();
+        config.holiday_calendars.insert("Asia/Shanghai".into(), vec!["cn".into()]);
+        config.holiday_calendars.insert(String::new(), vec!["us".into()]);
+        config.holiday_calendars.insert("America/New_York".into(), vec!["us".into()]);
+        config.hidden_calendars = vec!["work".into(), "cn".into()];
+        assert!(visible_in_region("cn", "Asia/Shanghai", &config));
+        assert!(!visible_in_region("cn", "", &config));
+        assert!(!visible_in_region("us", "Asia/Shanghai", &config));
+        assert!(visible_in_region("us", "", &config));
+        assert!(visible_in_region("us", "America/New_York", &config));
+        assert!(!visible_in_region("us", "Asia/Tokyo", &config));
+        assert!(visible_in_region("family", "Asia/Tokyo", &config));
+        assert!(!visible_in_region("work", "", &config));
+        config.show_events = false;
+        assert!(!visible_in_region("cn", "Asia/Shanghai", &config));
+        assert!(!visible_in_region("family", "", &config));
+    }
+
+    #[test]
+    fn subscription_urls_are_validated_without_opening_calendar() {
+        for input in ["https://example.com/holidays.ics", "http://example.com/calendar", " webcal://example.com/holidays.ics "] {
+            assert!(subscription_url(input).is_ok(), "{input}");
+        }
+        for input in ["", "not a URL", "file:///tmp/holidays.ics", "javascript:alert(1)", "webcal:///", "https://", "https://example.com/a\nb"] {
+            assert!(subscription_url(input).is_err(), "{input}");
+        }
     }
 }
