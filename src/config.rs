@@ -224,6 +224,9 @@ pub struct Config {
     /// strftime-style date format, e.g. "%a" (Fri) or "%a %b %-d" (Fri Oct 16).
     pub date_format: String,
 
+    /// In single-line menu bar clocks, place the date before the time.
+    pub date_before_time: bool,
+
     // ---- Dropdown menu ----
     pub menu_show_offsets: bool,
     pub menu_show_dates: bool,
@@ -266,6 +269,7 @@ impl Default for Config {
             custom_time_format: String::new(),
             date_mode: DateMode::WhenDifferent,
             date_format: "%a".into(),
+            date_before_time: false,
             menu_show_offsets: true,
             menu_show_dates: true,
             panel: PanelConfig::default(),
@@ -275,6 +279,19 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Compact date and time in the menu bar, keeping region overrides and other settings.
+    pub fn apply_date_time_preset(&mut self) {
+        self.layout = Layout::Inline;
+        self.use_24h = true;
+        self.show_ampm = false;
+        self.show_seconds = false;
+        self.custom_time_format.clear();
+        self.date_mode = DateMode::Always;
+        self.date_format = "%a %b %-d".into();
+        self.date_before_time = true;
+        self.dim_labels = false;
+    }
+
     /// Calendar tabs always include Local and every configured region, once each.
     pub fn calendar_regions(&self) -> Vec<String> {
         let available = std::iter::once(String::new()).chain(self.zones.iter().map(|z| z.tz.clone()));
@@ -415,12 +432,14 @@ mod tests {
         assert!(c.calendar.show_events);
         assert!(c.calendar.region_order.is_empty());
         assert!(c.calendar.holiday_calendars.is_empty());
+        assert!(!c.date_before_time);
     }
 
     #[test]
     fn round_trip() {
         let mut c = Config::default();
         c.zones[0].style.font_size = Some(18.0);
+        c.date_before_time = true;
         c.calendar.region_order = vec!["Asia/Tokyo".into(), String::new()];
         c.calendar.holiday_calendars.insert("Asia/Tokyo".into(), vec!["holidays".into()]);
         let s = serde_json::to_string(&c).unwrap();

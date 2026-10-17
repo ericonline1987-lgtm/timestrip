@@ -30,6 +30,7 @@ struct SettingsApp {
     all_zones: Vec<&'static str>,
     tab: Tab,
     zone_query: String,
+    zone_to_add: Option<&'static str>,
     font_query: String,
     preview: Option<(String, TextureHandle, TextureHandle)>,
     source: EventSource,
@@ -59,6 +60,7 @@ pub fn run() -> eframe::Result {
         all_zones: clock::all_zone_names(),
         tab: Tab::Clocks,
         zone_query: String::new(),
+        zone_to_add: None,
         font_query: String::new(),
         preview: None,
         source: EventSource::new(),
@@ -259,40 +261,7 @@ impl SettingsApp {
 
         ui.add_space(12.0);
         ui.heading(t("Add a region"));
-        ui.add(
-            egui::TextEdit::singleline(&mut self.zone_query)
-                .hint_text("Search a city or region, e.g. Tokyo, Paris, Kolkata")
-                .desired_width(f32::INFINITY),
-        );
-        let q = self.zone_query.trim().to_lowercase();
-        if !q.is_empty() {
-            let matches: Vec<&'static str> = self
-                .all_zones
-                .iter()
-                .copied()
-                .filter(|name| name.to_lowercase().replace('_', " ").contains(&q))
-                .take(40)
-                .collect();
-            if matches.is_empty() {
-                ui.label(weak(t("No matching time zones.")));
-            }
-            let now = Utc::now();
-            let local = clock::local_tz();
-            for name in matches {
-                let tz = clock::parse_tz(name);
-                let text = format!(
-                    "{}   —   {}   ({})",
-                    name.replace('_', " "),
-                    clock::time_string(now, tz, &self.config),
-                    clock::offset_string(now, tz, local)
-                );
-                if ui.button(text).clicked() {
-                    let label: String = city_name(name).chars().filter(|c| c.is_alphabetic()).take(3).collect();
-                    self.config.zones.push(Zone::new(name, &label.to_uppercase()));
-                    self.zone_query.clear();
-                }
-            }
-        }
+        add_region_ui(ui, &mut self.config.zones, &self.all_zones, &mut self.zone_query, &mut self.zone_to_add);
     }
 
     fn appearance_tab(&mut self, ui: &mut egui::Ui) {
@@ -364,6 +333,8 @@ impl SettingsApp {
         ui.label(weak(t("Defaults for every region. Individual regions can override these on the Regions tab.")));
         ui.add_space(6.0);
 
+        menu_bar_preset_ui(ui, c);
+        ui.add_space(10.0);
         ui.heading(t("Time"));
         let custom = !c.custom_time_format.trim().is_empty();
         ui.add_enabled_ui(!custom, |ui| {
@@ -390,6 +361,8 @@ impl SettingsApp {
         ui.radio_value(&mut c.date_mode, DateMode::Always, t("Always"));
         ui.add_enabled_ui(c.date_mode != DateMode::Never, |ui| {
             date_format_ui(ui, "date-format", &mut c.date_format);
+            ui.add_enabled(c.layout == Layout::Inline, egui::Checkbox::new(&mut c.date_before_time, "Date before time"))
+                .on_hover_text("Applies to the single-line menu bar layout.");
         });
 
         ui.add_space(10.0);
@@ -614,6 +587,53 @@ impl SettingsApp {
     }
 }
 
+fn menu_bar_preset_ui(ui: &mut egui::Ui, config: &mut Config) {
+    ui.heading("Menu bar preset");
+    ui.label(hint("Show the weekday, month, day and time without opening the panel. Example: NYC Fri Oct 16 21:44."));
+    if ui.button("Apple-style date & time").clicked() {
+        config.apply_date_time_preset();
+    }
+    ui.label(hint("Applies to shared defaults. Per-region overrides still apply; date names follow your date language."));
+}
+
+fn add_region_ui(ui: &mut egui::Ui, zones: &mut Vec<Zone>, choices: &[&'static str], query: &mut String, selected: &mut Option<&'static str>) {
+    ui.label(hint("Choose a time zone from the list. Search only filters the available choices."));
+    egui::ComboBox::from_id_salt("add-region-zone")
+        .selected_text(selected.map(|name| name.replace('_', " ")).unwrap_or_else(|| "Choose a time zone…".into()))
+        .width(330.0)
+        .height(260.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            if ui.add(egui::TextEdit::singleline(query)
+                .hint_text("Search time zones (optional)")
+                .desired_width(f32::INFINITY)).changed() {
+                *selected = None;
+            }
+            let filter = query.trim().to_lowercase();
+            let matches: Vec<_> = choices.iter().copied()
+                .filter(|name| name.to_lowercase().replace('_', " ").contains(&filter))
+                .collect();
+            if matches.is_empty() {
+                ui.label(weak(t("No matching time zones.")));
+            }
+            egui::ScrollArea::vertical().id_salt("time-zone-choices").max_height(210.0)
+                .auto_shrink([false, false]).show(ui, |ui| {
+                    for name in matches {
+                        if ui.selectable_value(selected, Some(name), name.replace('_', " ")).clicked() {
+                            ui.close();
+                        }
+                    }
+                });
+        });
+    if ui.add_enabled(selected.is_some(), egui::Button::new("Add region")).clicked() {
+        if let Some(name) = selected.take() {
+            let label: String = city_name(name).chars().filter(|c| c.is_alphabetic()).take(3).collect();
+            zones.push(Zone::new(name, &label.to_uppercase()));
+            query.clear();
+        }
+    }
+}
+
 fn calendar_order_ui(ui: &mut egui::Ui, config: &mut CalendarConfig, choices: &[(String, String)]) {
     ui.add_space(10.0);
     ui.heading("Calendar region order");
@@ -826,6 +846,94 @@ mod tests {
                 pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
             }], &mut show);
         }
+    }
+
+    #[test]
+    fn date_time_preset_shows_the_date_even_on_the_local_day() {
+        use chrono::TimeZone;
+        let ctx = egui::Context::default();
+        let mut config = Config::default();
+        config.zones = vec![Zone::new("UTC", "UTC")];
+        config.custom_time_format = "%H.%M".into();
+        config.date_mode = DateMode::Never;
+        config.calendar.region_order = vec![String::new()];
+        let text = frame(&ctx, vec![], |ui| menu_bar_preset_ui(ui, &mut config));
+        let preset = text.iter().find(|(label, _)| label == "Apple-style date & time").unwrap().1;
+        click(&ctx, preset, |ui| menu_bar_preset_ui(ui, &mut config));
+        let now = Utc.with_ymd_and_hms(2026, 10, 16, 21, 44, 0).unwrap();
+        let shown = clock::segments(now, chrono_tz::Tz::UTC, &config);
+        assert_eq!(shown[0].date.as_deref(), Some("Fri Oct 16"));
+        assert_eq!(shown[0].time, "21:44");
+        assert!(config.date_before_time);
+        assert_eq!(config.layout, Layout::Inline);
+        assert_eq!(config.calendar.region_order, vec![String::new()]);
+        config.zones[0].style.date_mode = Some(DateMode::Never);
+        assert!(clock::segments(now, chrono_tz::Tz::UTC, &config)[0].date.is_none());
+    }
+
+    #[test]
+    fn region_picker_browses_without_typing_and_adds_only_after_selection() {
+        let ctx = egui::Context::default();
+        let mut zones = Vec::new();
+        let choices = ["America/New_York", "Asia/Tokyo", "Europe/London"];
+        let mut query = String::new();
+        let mut selected = None;
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let add = text.iter().find(|(label, _)| label == "Add region").unwrap().1;
+        click(&ctx, add, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert!(zones.is_empty(), "adding requires a selected time zone");
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let picker = text.iter().find(|(label, _)| label == "Choose a time zone…").unwrap().1;
+        click(&ctx, picker, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        for name in choices {
+            assert!(text.iter().any(|(label, _)| *label == name.replace('_', " ")), "missing choice: {name}");
+        }
+        let tokyo = text.iter().find(|(label, _)| label == "Asia/Tokyo").unwrap().1;
+        click(&ctx, tokyo, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert_eq!(selected, Some("Asia/Tokyo"));
+        assert!(zones.is_empty(), "selecting a time zone must not add it immediately");
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let add = text.iter().find(|(label, _)| label == "Add region").unwrap().1;
+        click(&ctx, add, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].tz, "Asia/Tokyo");
+        assert_eq!(zones[0].label, "TOK");
+        assert_eq!(selected, None);
+        assert!(query.is_empty());
+    }
+
+    #[test]
+    fn region_search_only_filters_and_clearing_restores_choices() {
+        let ctx = egui::Context::default();
+        let mut zones = Vec::new();
+        let choices = ["America/New_York", "Asia/Tokyo", "Europe/London"];
+        let mut query = String::new();
+        let mut selected = None;
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let picker = text.iter().find(|(label, _)| label == "Choose a time zone…").unwrap().1;
+        click(&ctx, picker, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let search = text.iter().find(|(label, _)| label == "Search time zones (optional)").unwrap().1;
+        click(&ctx, search, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let text = frame(&ctx, vec![egui::Event::Text("tOkYo".into())], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert_eq!(query, "tOkYo");
+        assert!(text.iter().any(|(label, _)| label == "Asia/Tokyo"));
+        assert!(!text.iter().any(|(label, _)| label == "Europe/London"));
+        assert!(selected.is_none());
+        assert!(zones.is_empty());
+        let backspace = egui::Event::Key {
+            key: egui::Key::Backspace, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, vec![backspace; query.len()], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert!(query.is_empty());
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert!(text.iter().any(|(label, _)| label == "Europe/London"), "restored choices: {text:?}");
+        query = "not a time zone".into();
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert!(text.iter().any(|(label, _)| label == "No matching time zones."));
+        assert!(selected.is_none());
+        assert!(zones.is_empty());
     }
 
     #[test]

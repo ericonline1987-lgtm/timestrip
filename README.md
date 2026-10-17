@@ -12,6 +12,8 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 
 **Menu bar**
 - Any number of regions; pick which ones appear in the bar
+- Add regions by selecting from the full time-zone list; optional search narrows the
+  choices, and **Add region** confirms the selection
 - Move regions up or down in Settings → Regions; uncheck **Show in menu bar** to keep
   a region available in the expanded panel without pinning it to the bar
 - Your own short labels (`NYC`, `Mum`, `HQ`…)
@@ -22,6 +24,10 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 - Dim or hide labels; custom color, or automatic light/dark
 - 12/24-hour, AM/PM, seconds, or your own time format
 - Show the date never, always, or only when that region is on a different day than you
+- **Time & Date → Apple-style date & time** applies a compact single-line preset such
+  as `NYC Fri Oct 16 21:44`, showing the full date even on the same day as Local.
+  **Date before time** changes the date position; custom formats and per-region
+  overrides remain available, and date names follow the selected date language.
 
 **Per-region styles** — any region can override the defaults: its own size, font,
 weight, color, label, 24-hour, AM/PM, seconds, time format, date display and date format.
@@ -133,6 +139,9 @@ fields preserve older configs; **Follow clock order** restores the default tab o
 
 - The menu bar is about 22 pt tall. Larger text is scaled down to fit, so the stacked
   layout is the way to get bigger digits into the same space.
+- Local follows the Mac's system time zone even if the launcher supplies a `TZ`
+  environment variable. An explicit Local override in Settings → Language still
+  takes precedence, and other regions keep their selected time zones.
 - Hold ⌘ and drag the clock to move it within the menu bar.
 - "Open at Login" adds `~/Library/LaunchAgents/com.timestrip.app.plist`.
 - Calendar events are read-only. The first time you click "Show my calendar events",

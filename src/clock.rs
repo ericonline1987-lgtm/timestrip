@@ -15,10 +15,21 @@ pub fn set_local_override(name: &str) {
 
 /// The system's own time zone, falling back to UTC if it can't be determined.
 pub fn system_tz() -> Tz {
+    // CoreFoundation honors inherited TZ values, even when querying the system zone.
+    // The macOS localtime link records the actual OS selection independently of TZ.
+    #[cfg(target_os = "macos")]
+    if let Some(tz) = std::fs::read_link("/etc/localtime").ok().and_then(|path| zoneinfo_tz(&path)) {
+        return tz;
+    }
     iana_time_zone::get_timezone()
         .ok()
         .and_then(|name| name.parse::<Tz>().ok())
         .unwrap_or(Tz::UTC)
+}
+
+#[cfg(target_os = "macos")]
+fn zoneinfo_tz(path: &std::path::Path) -> Option<Tz> {
+    path.to_str()?.split_once("/zoneinfo/")?.1.parse().ok()
 }
 
 /// The time zone treated as "Local": your chosen override, or the system's.
@@ -191,6 +202,41 @@ mod tests {
 
     fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_time_zone_ignores_process_override() {
+        let path = std::fs::read_link("/etc/localtime").unwrap();
+        let expected: Tz = path.to_str().unwrap().split_once("/zoneinfo/").unwrap().1.parse().unwrap();
+        if std::env::var_os("TIMESTRIP_TZ_TEST_CHILD").is_some() {
+            assert_eq!(system_tz(), expected);
+            let now = at(2026, 10, 17, 6, 30);
+            assert_eq!(now.with_timezone(&system_tz()).date_naive(), now.with_timezone(&expected).date_naive());
+            assert_eq!(now.with_timezone(&system_tz()).time(), now.with_timezone(&expected).time());
+            set_local_override("Asia/Tokyo");
+            assert_eq!(local_tz(), chrono_tz::Asia::Tokyo);
+            set_local_override("");
+            assert_eq!(local_tz(), expected);
+            return;
+        }
+        let injected = if expected == chrono_tz::Asia::Singapore { "America/Los_Angeles" } else { "Asia/Singapore" };
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "clock::tests::system_time_zone_ignores_process_override", "--nocapture"])
+            .env("TZ", injected)
+            .env("TIMESTRIP_TZ_TEST_CHILD", "1")
+            .output().unwrap();
+        assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_zoneinfo_paths_resolve_iana_names() {
+        use std::path::Path;
+        assert_eq!(zoneinfo_tz(Path::new("/var/db/timezone/zoneinfo/America/Los_Angeles")), Some(chrono_tz::America::Los_Angeles));
+        assert_eq!(zoneinfo_tz(Path::new("/private/var/db/timezone/zoneinfo/Asia/Kathmandu")), Some(chrono_tz::Asia::Kathmandu));
+        assert_eq!(zoneinfo_tz(Path::new("/var/db/timezone/zoneinfo/Unknown")), None);
+        assert_eq!(zoneinfo_tz(Path::new("/tmp/localtime")), None);
     }
 
     #[test]
