@@ -165,9 +165,16 @@ impl Renderer {
                     if let Some(l) = &seg.label {
                         line.push(run(format!("{l} "), time_px, dim_alpha));
                     }
+                    if c.date_before_time {
+                        if let Some(d) = &seg.date {
+                            line.push(run(format!("{d} "), time_px, dim_alpha));
+                        }
+                    }
                     line.push(run(seg.time.clone(), time_px, 1.0));
-                    if let Some(d) = &seg.date {
-                        line.push(run(format!(" {d}"), time_px, dim_alpha));
+                    if !c.date_before_time {
+                        if let Some(d) = &seg.date {
+                            line.push(run(format!(" {d}"), time_px, dim_alpha));
+                        }
                     }
                     vec![line]
                 }
@@ -426,5 +433,22 @@ mod tests {
     fn nothing_pinned_means_no_image() {
         let mut r = Renderer::new();
         assert!(r.render(&[], &Config::default(), [0; 3]).is_none());
+    }
+
+    #[test]
+    fn date_before_time_matches_a_compact_single_line() {
+        let mut renderer = Renderer::new();
+        let mut config = Config::default();
+        config.apply_date_time_preset();
+        let mut dated = seg("NYC", "21:44", 13.0, None);
+        dated.date = Some("Fri Oct 16".into());
+        let image = renderer.render(&[dated.clone()], &config, [0; 3]).unwrap();
+        let expected = renderer.render(&[seg("NYC", "Fri Oct 16 21:44", 13.0, None)], &config, [0; 3]).unwrap();
+        assert_eq!(image.width, expected.width);
+        assert_eq!(image.height, (BAR_HEIGHT_PT * SCALE) as u32);
+        assert_eq!(image.rgba, expected.rgba);
+        config.date_before_time = false;
+        let after = renderer.render(&[dated], &config, [0; 3]).unwrap();
+        assert_ne!(image.rgba, after.rgba);
     }
 }

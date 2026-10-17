@@ -12,6 +12,10 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 
 **Menu bar**
 - Any number of regions; pick which ones appear in the bar
+- Add regions by selecting from the full time-zone list; optional search narrows the
+  choices, and **Add region** confirms the selection
+- Move regions up or down in Settings → Regions; uncheck **Show in menu bar** to keep
+  a region available in the expanded panel without pinning it to the bar
 - Your own short labels (`NYC`, `Mum`, `HQ`…)
 - Text size from 8 to 40 pt, any installed font, weights from Thin to Black
 - Single-line or stacked layout (small label above a larger time)
@@ -20,6 +24,10 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 - Dim or hide labels; custom color, or automatic light/dark
 - 12/24-hour, AM/PM, seconds, or your own time format
 - Show the date never, always, or only when that region is on a different day than you
+- **Time & Date → Apple-style date & time** applies a compact single-line preset such
+  as `NYC Fri Oct 16 21:44`, showing the full date even on the same day as Local.
+  **Date before time** changes the date position; custom formats and per-region
+  overrides remain available, and date names follow the selected date language.
 
 **Per-region styles** — any region can override the defaults: its own size, font,
 weight, color, label, 24-hour, AM/PM, seconds, time format, date display and date format.
@@ -33,6 +41,10 @@ Make your home office big and bold and the rest small and dim.
 - Your Calendar app events, with colored dots on busy days; each event shows its time in
   the selected region and in your other regions (e.g. `NYC 8:00 PM · TYO 9:00 AM Fri`)
 - An upcoming-days list, and buttons for Settings and the Calendar app
+- Independently reorder the calendar's region tabs, including Local, in Settings →
+  Calendar & Panel → Calendar region order
+- Link holiday calendars to one or more regions; their colored date markers, hover
+  titles and event names follow the selected region
 
 **Right-click menu** — every region's time, date and offset (click to copy), Copy All
 Times, Show Clocks & Calendar, Settings…, Open at Login, Quit.
@@ -103,10 +115,33 @@ Any setting you leave out uses its default. Time zones use
 [IANA names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones); time and
 date formats use [strftime syntax](https://docs.rs/chrono/latest/chrono/format/strftime/index.html).
 
+### Holiday sources and calendar order
+
+In **Calendar & Panel → Add a holiday source**, paste an `https://`, `http://`, or
+`webcal://` ICS subscription URL and click **Subscribe in Calendar…**. Complete the
+confirmation in macOS Calendar, return to TimeStrip and click **Refresh list**.
+Calendar manages subscription updates and recurring events. You can also use holiday
+calendars already present in Calendar, such as US Holidays or China Holidays.
+
+Enable **Show events from the Calendar app** and grant calendar access, then use
+**Holiday sources by region** to choose the region and check its sources. A linked
+source appears only in its associated regions; ordinary calendars still use the
+**Calendars to show** selection. Unlinking a source leaves it hidden from ordinary
+events until you explicitly enable it there. All-day holidays retain their dates
+when switching regions, including when Local uses a custom time zone.
+
+The `calendar.region_order` array stores IANA zone names, with `""` representing
+Local. Missing regions are appended automatically. `calendar.holiday_calendars`
+maps the same region keys to arrays of macOS calendar identifiers. These optional
+fields preserve older configs; **Follow clock order** restores the default tab order.
+
 ## Notes
 
 - The menu bar is about 22 pt tall. Larger text is scaled down to fit, so the stacked
   layout is the way to get bigger digits into the same space.
+- Local follows the Mac's system time zone even if the launcher supplies a `TZ`
+  environment variable. An explicit Local override in Settings → Language still
+  takes precedence, and other regions keep their selected time zones.
 - Hold ⌘ and drag the clock to move it within the menu bar.
 - "Open at Login" adds `~/Library/LaunchAgents/com.timestrip.app.plist`.
 - Calendar events are read-only. The first time you click "Show my calendar events",
