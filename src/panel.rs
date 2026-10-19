@@ -48,7 +48,7 @@ pub fn run(x: f32, y: f32) -> eframe::Result {
         ..Default::default()
     };
     let mut app = PanelApp::new(config);
-    eframe::run_ui_native("TimeStrip", options, move |ui, _frame| app.ui(ui))
+    crate::window::run("TimeStrip", options, move |ui, _frame| app.ui(ui))
 }
 
 impl PanelApp {
