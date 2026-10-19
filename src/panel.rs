@@ -142,6 +142,7 @@ impl PanelApp {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.y = 5.0;
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
         self.reload_config_if_changed();
 
@@ -163,14 +164,14 @@ impl PanelApp {
             self.events_fetched = None;
         }
 
-        let frame = egui::Frame::new().fill(ui.visuals().panel_fill).inner_margin(Margin::same(12));
+        let frame = egui::Frame::new().fill(ui.visuals().panel_fill).inner_margin(Margin::same(16));
         let content_height = egui::CentralPanel::default()
             .frame(frame)
             .show(ui, |ui| ui.vertical(|ui| self.contents(ui)).response.rect.height())
             .inner;
 
         // Grow or shrink the window to fit the content.
-        let wanted = ((content_height + 24.0) * zoom).min(1000.0).ceil();
+        let wanted = ((content_height + 32.0) * zoom).min(1000.0).ceil();
         if (wanted - self.last_height).abs() > 1.0 {
             self.last_height = wanted;
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
@@ -181,7 +182,7 @@ impl PanelApp {
     }
 
     fn contents(&mut self, ui: &mut egui::Ui) {
-        ui.set_width(self.config.panel.width - 24.0);
+        ui.set_width(self.config.panel.width - 32.0);
         let now = Utc::now() + Duration::minutes(self.slider_minutes as i64);
 
         if self.config.panel.show_clocks {
@@ -191,23 +192,26 @@ impl PanelApp {
             self.slider(ui);
         }
         if self.config.panel.show_calendar {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.separator();
-            self.calendar(ui);
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                self.calendar(ui);
+            });
             ui.separator();
             self.events_section(ui);
         }
         ui.add_space(6.0);
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button(t("Settings…")).clicked() {
+            if ui.add(egui::Button::new(t("Settings…")).frame(false)).clicked() {
                 crate::spawn_self(&["--settings"]);
             }
-            if cfg!(target_os = "macos") && ui.button(t("Open Calendar")).clicked() {
+            if cfg!(target_os = "macos") && ui.add(egui::Button::new(t("Open Calendar")).frame(false)).clicked() {
                 let _ = std::process::Command::new("open").args(["-a", "Calendar"]).spawn();
             }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(t("Close")).clicked() {
+                if ui.add(egui::Button::new(t("Close")).frame(false)).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
@@ -228,27 +232,28 @@ impl PanelApp {
             };
             let selected = r == self.region;
             let fill = if selected {
-                ui.visuals().selection.bg_fill.gamma_multiply(0.35)
+                ui.visuals().selection.bg_fill.gamma_multiply(0.16)
             } else {
-                Color32::TRANSPARENT
+                ui.visuals().faint_bg_color
             };
             let resp = egui::Frame::new()
                 .fill(fill)
-                .corner_radius(6.0)
-                .inner_margin(Margin::symmetric(8, 4))
+                .corner_radius(10.0)
+                .inner_margin(Margin::symmetric(12, 10))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(self.region_name(r)).strong());
-                            let detail = format!(
-                                "{city} · {} · {}",
-                                clock::date_string(now, tz, "%a %b %-d"),
-                                clock::offset_string(now, tz, local)
-                            );
-                            ui.label(RichText::new(detail).small().weak());
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.label(RichText::new(self.region_name(r)).strong().size(15.0));
+                            ui.label(RichText::new(city).small().weak());
+                            ui.label(RichText::new(clock::offset_string(now, tz, local)).small().weak());
                         });
                         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(clock::time_string(now, tz, &rc)).size(22.0));
+                            ui.with_layout(egui::Layout::top_down(Align::RIGHT), |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.label(RichText::new(clock::time_string(now, tz, &rc)).size(28.0).strong());
+                                ui.label(RichText::new(clock::date_string(now, tz, "%a %b %-d")).small().weak());
+                            });
                         });
                     });
                 })
@@ -342,7 +347,7 @@ impl PanelApp {
         let today = self.today(self.region);
         let cols = if cal.show_week_numbers { 8 } else { 7 };
         let cell_w = (ui.available_width() / cols as f32).floor();
-        let cell = Vec2::new(cell_w, 30.0);
+        let cell = Vec2::new(cell_w, 32.0);
         let visuals = ui.visuals().clone();
         let accent = visuals.selection.bg_fill;
         let mut clicked: Option<NaiveDate> = None;
@@ -383,7 +388,7 @@ impl PanelApp {
                     }
                     let p = ui.painter();
                     let center = rect.center() - Vec2::new(0.0, 3.0);
-                    let radius = 11.0;
+                    let radius = 12.0;
                     let mut text_color = if !in_month {
                         visuals.weak_text_color().gamma_multiply(0.6)
                     } else if cal.highlight_weekends && calendar::is_weekend(day) {
