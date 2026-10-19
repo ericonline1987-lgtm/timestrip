@@ -11,6 +11,9 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 ## Features
 
 **Menu bar**
+- **Local** is a permanent entry in Settings → Regions, shown by default. Its
+  **Menu bar** checkbox hides or shows it; it cannot be removed and follows the
+  system time zone or your Local override in Settings → Language.
 - Any number of regions; pick which ones appear in the bar
 - Add regions by selecting from the full time-zone list; optional search narrows the
   choices, and **Add region** confirms the selection

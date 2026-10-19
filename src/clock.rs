@@ -146,9 +146,10 @@ pub struct Segment {
 }
 
 pub fn segments(now: DateTime<Utc>, local: Tz, c: &Config) -> Vec<Segment> {
-    c.zones
-        .iter()
-        .filter(|z| z.show_in_bar)
+    let local_zone = Zone::new(local.name(), crate::i18n::t("Local"));
+    std::iter::once(&local_zone)
+        .filter(|_| c.show_local_in_bar)
+        .chain(c.zones.iter().filter(|z| z.show_in_bar))
         .map(|z| {
             let tz = parse_tz(&z.tz);
             let e = c.for_zone(z);
@@ -287,6 +288,7 @@ mod tests {
     #[test]
     fn menu_bar_order_visibility_and_custom_formats() {
         let mut c = Config::default();
+        c.show_local_in_bar = false;
         c.zones.swap(0, 2);
         c.zones[1].show_in_bar = false;
         c.custom_time_format = "%H.%M".into();
@@ -298,5 +300,36 @@ mod tests {
         assert_eq!(shown[1].label.as_deref(), Some("NYC"));
         assert_eq!(shown[1].time, "20.35");
         assert_eq!(c.zones.len(), 3);
+    }
+
+    #[test]
+    fn local_clock_survives_region_removal_and_can_be_hidden() {
+        let now = at(2026, 10, 16, 0, 35);
+        let local = chrono_tz::Asia::Singapore;
+        let mut c: Config = serde_json::from_str(r#"{"zones":[],"use_24h":true}"#).unwrap();
+        let shown = segments(now, local, &c);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].label.as_deref(), Some("Local"));
+        assert_eq!(shown[0].time, "08:35");
+        c.zones.push(Zone::new("Asia/Tokyo", "TYO"));
+        assert_eq!(segments(now, local, &c).len(), 2);
+        c.zones.clear();
+        assert_eq!(segments(now, local, &c), shown);
+        c.show_local_in_bar = false;
+        assert!(segments(now, local, &c).is_empty());
+        assert_eq!(c.calendar_regions(), vec![""]);
+        c.show_local_in_bar = true;
+        assert_eq!(segments(now, local, &c), shown);
+    }
+
+    #[test]
+    fn local_visibility_leaves_region_visibility_and_styles_unchanged() {
+        let now = at(2026, 10, 16, 0, 35);
+        let mut c = Config::default();
+        c.zones[0].show_in_bar = false;
+        c.zones[1].style.custom_time_format = Some("%H:%M:%S".into());
+        let with_local = segments(now, Tz::UTC, &c);
+        c.show_local_in_bar = false;
+        assert_eq!(with_local[1..], segments(now, Tz::UTC, &c));
     }
 }

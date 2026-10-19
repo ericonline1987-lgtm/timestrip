@@ -176,6 +176,8 @@ impl Default for PanelConfig {
 #[serde(default)]
 pub struct Config {
     pub zones: Vec<Zone>,
+    /// Show the permanent Local clock in the menu bar.
+    pub show_local_in_bar: bool,
 
     // ---- Language & time zone ----
     /// Interface language code ("en", "zh-Hans", "ja", …); empty = follow the system.
@@ -244,6 +246,7 @@ impl Default for Config {
                 Zone::new("Europe/London", "LON"),
                 Zone::new("Asia/Tokyo", "TYO"),
             ],
+            show_local_in_bar: true,
             language: String::new(),
             date_language: String::new(),
             local_time_zone: String::new(),
@@ -309,6 +312,7 @@ impl Config {
         let keep = std::mem::take(self);
         *self = Config {
             zones: keep.zones,
+            show_local_in_bar: keep.show_local_in_bar,
             language: keep.language,
             date_language: keep.date_language,
             local_time_zone: keep.local_time_zone,
@@ -433,6 +437,7 @@ mod tests {
         assert!(c.calendar.region_order.is_empty());
         assert!(c.calendar.holiday_calendars.is_empty());
         assert!(!c.date_before_time);
+        assert!(c.show_local_in_bar);
     }
 
     #[test]
@@ -440,6 +445,7 @@ mod tests {
         let mut c = Config::default();
         c.zones[0].style.font_size = Some(18.0);
         c.date_before_time = true;
+        c.show_local_in_bar = false;
         c.calendar.region_order = vec!["Asia/Tokyo".into(), String::new()];
         c.calendar.holiday_calendars.insert("Asia/Tokyo".into(), vec!["holidays".into()]);
         let s = serde_json::to_string(&c).unwrap();
@@ -457,6 +463,14 @@ mod tests {
         let plain = c.for_zone(&c.zones[0]);
         assert_eq!(plain.font_size, 13.0);
         assert!(!plain.use_custom_color);
+    }
+
+    #[test]
+    fn resetting_appearance_preserves_local_visibility() {
+        let mut c = Config::default();
+        c.show_local_in_bar = false;
+        c.reset_appearance();
+        assert!(!c.show_local_in_bar);
     }
 
     #[test]

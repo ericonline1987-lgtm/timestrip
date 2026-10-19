@@ -224,6 +224,9 @@ impl SettingsApp {
         ui.label(hint(t("Each region can have its own label, size, font, color and time format. Anything not set here uses the Appearance and Time & Date tabs.")));
         ui.add_space(6.0);
 
+        local_clock_ui(ui, &mut self.config);
+        ui.add_space(4.0);
+
         enum Action {
             Up(usize),
             Down(usize),
@@ -599,6 +602,15 @@ impl SettingsApp {
     }
 }
 
+fn local_clock_ui(ui: &mut egui::Ui, config: &mut Config) {
+    egui::Frame::new().fill(ui.visuals().faint_bg_color).corner_radius(10.0).inner_margin(12).show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.label(RichText::new(t("Local")).strong());
+        ui.label(hint(clock::local_tz().name()));
+        ui.checkbox(&mut config.show_local_in_bar, t("Menu bar"));
+    });
+}
+
 fn local_time_zone_ui(ui: &mut egui::Ui, selected: &mut String, choices: &[&str], query: &mut String) {
     egui::ComboBox::from_id_salt("local-tz")
         .selected_text(selected.replace('_', " "))
@@ -889,6 +901,31 @@ mod tests {
     }
 
     #[test]
+    fn local_clock_has_a_visibility_toggle_without_a_remove_action() {
+        let ctx = egui::Context::default();
+        let mut config = Config::default();
+        config.local_time_zone = "Asia/Singapore".into();
+        let original = config.clone();
+        let text = frame(&ctx, vec![], |ui| local_clock_ui(ui, &mut config));
+        assert!(text.iter().any(|(label, _)| label == "Local"));
+        assert!(!text.iter().any(|(label, _)| label == "Remove"));
+        let toggle = text.iter().find(|(label, _)| label == "Menu bar").unwrap().1;
+        click(&ctx, toggle, |ui| local_clock_ui(ui, &mut config));
+        assert!(!config.show_local_in_bar);
+        config.show_local_in_bar = true;
+        assert_eq!(config, original, "the toggle must preserve all other settings");
+        config.zones.clear();
+        let text = frame(&ctx, vec![], |ui| local_clock_ui(ui, &mut config));
+        assert!(text.iter().any(|(label, _)| label == "Local"));
+        let toggle = text.iter().find(|(label, _)| label == "Menu bar").unwrap().1;
+        click(&ctx, toggle, |ui| local_clock_ui(ui, &mut config));
+        assert!(!config.show_local_in_bar);
+        click(&ctx, toggle, |ui| local_clock_ui(ui, &mut config));
+        assert!(config.show_local_in_bar);
+        assert!(config.zones.is_empty());
+    }
+
+    #[test]
     fn local_time_zone_search_filters_without_changing_the_selection() {
         let ctx = egui::Context::default();
         let choices = ["America/New_York", "Asia/Tokyo", "America/Los_Angeles"];
@@ -956,6 +993,7 @@ mod tests {
         use chrono::TimeZone;
         let ctx = egui::Context::default();
         let mut config = Config::default();
+        config.show_local_in_bar = false;
         config.zones = vec![Zone::new("UTC", "UTC")];
         config.custom_time_format = "%H.%M".into();
         config.date_mode = DateMode::Never;
