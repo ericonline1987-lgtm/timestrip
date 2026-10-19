@@ -21,6 +21,19 @@ enum Tab {
     General,
 }
 
+impl Tab {
+    fn title(self) -> &'static str {
+        t(match self {
+            Self::Clocks => "Regions",
+            Self::Appearance => "Appearance",
+            Self::TimeDate => "Time & Date",
+            Self::Calendar => "Calendar & Panel",
+            Self::Language => "Language",
+            Self::General => "General",
+        })
+    }
+}
+
 struct SettingsApp {
     config: Config,
     saved: Config,
@@ -46,8 +59,8 @@ pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(t("TimeStrip Settings"))
-            .with_inner_size([680.0, 720.0])
-            .with_min_inner_size([540.0, 440.0]),
+            .with_inner_size([860.0, 720.0])
+            .with_min_inner_size([720.0, 520.0]),
         ..Default::default()
     };
     let renderer = Renderer::new();
@@ -105,17 +118,28 @@ impl SettingsApp {
             self.calendars = None;
         }
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Clocks, format!("🌐 {}", t("Regions")));
-                ui.selectable_value(&mut self.tab, Tab::Appearance, format!("🔠 {}", t("Appearance")));
-                ui.selectable_value(&mut self.tab, Tab::TimeDate, format!("🕘 {}", t("Time & Date")));
-                ui.selectable_value(&mut self.tab, Tab::Calendar, format!("📅 {}", t("Calendar & Panel")));
-                ui.selectable_value(&mut self.tab, Tab::Language, format!("🌍 {}", t("Language")));
-                ui.selectable_value(&mut self.tab, Tab::General, format!("⚙ {}", t("General")));
+        egui::Panel::left("settings-navigation")
+            .exact_size(152.0)
+            .resizable(false)
+            .frame(egui::Frame::new().fill(ui.visuals().faint_bg_color).inner_margin(12))
+            .show(ui, |ui| {
+                ui.add_space(8.0);
+                ui.label(RichText::new("TimeStrip").strong().size(17.0));
+                ui.add_space(18.0);
+                for tab in [Tab::Clocks, Tab::Appearance, Tab::TimeDate, Tab::Calendar, Tab::Language, Tab::General] {
+                    let button = egui::Button::new(tab.title())
+                        .selected(self.tab == tab)
+                        .min_size(egui::vec2(ui.available_width(), 34.0));
+                    if ui.add(button).clicked() {
+                        self.tab = tab;
+                    }
+                }
             });
-            ui.separator();
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(ui.visuals().panel_fill).inner_margin(20)).show(ui, |ui| {
+            ui.heading(self.tab.title());
+            ui.add_space(4.0);
             self.preview_ui(ui);
+            ui.add_space(4.0);
             ui.separator();
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
                 Tab::Clocks => self.clocks_tab(ui),
@@ -171,22 +195,19 @@ impl SettingsApp {
             self.preview = light.zip(dark).map(|(l, d)| (key, l, d));
         }
 
-        ui.label(hint("Preview"));
+        ui.label(hint(t("Preview")));
         match &self.preview {
             Some((_, on_light, on_dark)) => {
-                for (tex, bg) in [(on_light, Color32::from_gray(236)), (on_dark, Color32::from_gray(30))] {
-                    let size = tex.size_vec2() / SCALE;
-                    egui::Frame::new()
-                        .fill(bg)
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::symmetric(10, 4))
-                        .show(ui, |ui| {
+                ui.columns(2, |columns| {
+                    for (column, (tex, bg)) in columns.iter_mut().zip([(on_light, Color32::from_gray(236)), (on_dark, Color32::from_gray(30))]) {
+                        egui::Frame::new().fill(bg).corner_radius(8.0).inner_margin(10).show(column, |ui| {
                             ui.set_min_width(ui.available_width());
-                            ui.image(egui::load::SizedTexture::new(tex.id(), size));
+                            egui::ScrollArea::horizontal().id_salt(tex.id()).show(ui, |ui| {
+                                ui.image(egui::load::SizedTexture::new(tex.id(), tex.size_vec2() / SCALE));
+                            });
                         });
-                    ui.add_space(4.0);
-                }
-                ui.label(hint("The menu bar is about 22 pt tall; anything taller is scaled down to fit."));
+                    }
+                });
             }
             None => {
                 ui.label(t("No regions are shown in the menu bar. Tick “Menu bar” on the Regions tab."));
@@ -198,11 +219,7 @@ impl SettingsApp {
     }
 
     fn clocks_tab(&mut self, ui: &mut egui::Ui) {
-        ui.label(weak("Use the arrows to set the menu bar and expanded clock order. Only checked regions appear in the menu bar; the panel includes every region."));
-        ui.label(hint("Open a region's style settings for its own time/date format, or use Time & Date for shared defaults."));
-        ui.label(weak(t(
-            t("Each region can have its own label, size, font, color and time format. Anything not set here uses the Appearance and Time & Date tabs."),
-        )));
+        ui.label(hint(t("Each region can have its own label, size, font, color and time format. Anything not set here uses the Appearance and Time & Date tabs.")));
         ui.add_space(6.0);
 
         enum Action {
@@ -216,7 +233,7 @@ impl SettingsApp {
         let families = &self.families;
 
         for (i, z) in self.config.zones.iter_mut().enumerate() {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::Frame::new().fill(ui.visuals().faint_bg_color).corner_radius(10.0).inner_margin(12).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     if ui.add_enabled(i > 0, egui::Button::new("▲").small()).on_hover_text("Move region up").clicked() {
@@ -235,9 +252,9 @@ impl SettingsApp {
                         if ui.button(t("Remove")).clicked() {
                             action = Some(Action::Remove(i));
                         }
-                        ui.checkbox(&mut z.show_in_bar, "Show in menu bar");
                     });
                 });
+                ui.checkbox(&mut z.show_in_bar, t("Menu bar"));
                 let title = if z.style.is_empty() {
                     t("Style for this region (using defaults)").to_string()
                 } else {
@@ -597,15 +614,15 @@ fn menu_bar_preset_ui(ui: &mut egui::Ui, config: &mut Config) {
 }
 
 fn add_region_ui(ui: &mut egui::Ui, zones: &mut Vec<Zone>, choices: &[&'static str], query: &mut String, selected: &mut Option<&'static str>) {
-    ui.label(hint("Choose a time zone from the list. Search only filters the available choices."));
+    ui.label(hint(t("Choose a time zone from the list. Search only filters the available choices.")));
     egui::ComboBox::from_id_salt("add-region-zone")
-        .selected_text(selected.map(|name| name.replace('_', " ")).unwrap_or_else(|| "Choose a time zone…".into()))
+        .selected_text(selected.map(|name| name.replace('_', " ")).unwrap_or_else(|| t("Choose a time zone…").into()))
         .width(330.0)
         .height(260.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
             if ui.add(egui::TextEdit::singleline(query)
-                .hint_text("Search time zones (optional)")
+                .hint_text(t("Search time zones (optional)"))
                 .desired_width(f32::INFINITY)).changed() {
                 *selected = None;
             }
@@ -625,7 +642,7 @@ fn add_region_ui(ui: &mut egui::Ui, zones: &mut Vec<Zone>, choices: &[&'static s
                     }
                 });
         });
-    if ui.add_enabled(selected.is_some(), egui::Button::new("Add region")).clicked() {
+    if ui.add_enabled(selected.is_some(), egui::Button::new(t("Add region"))).clicked() {
         if let Some(name) = selected.take() {
             let label: String = city_name(name).chars().filter(|c| c.is_alphabetic()).take(3).collect();
             zones.push(Zone::new(name, &label.to_uppercase()));
