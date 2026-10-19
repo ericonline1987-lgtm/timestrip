@@ -17,6 +17,9 @@ NYC 8:35 PM   LON 1:35 AM Fri   TYO 9:35 AM Fri
 - Any number of regions; pick which ones appear in the bar
 - Add regions by selecting from the full time-zone list; optional search narrows the
   choices, and **Add region** confirms the selection
+- Both time-zone pickers match skipped letters, so `sig` or `sigapore` finds
+  `Asia/Singapore`. Search ignores case and treats spaces, underscores and slashes
+  as word separators; literal matches appear before approximate matches.
 - Move regions up or down in Settings → Regions; uncheck **Show in menu bar** to keep
   a region available in the expanded panel without pinning it to the bar
 - Your own short labels (`NYC`, `Mum`, `HQ`…)
