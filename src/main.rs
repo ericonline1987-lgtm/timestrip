@@ -18,6 +18,7 @@ mod panel;
 mod render;
 mod settings;
 mod tray;
+mod window;
 
 use std::process::{Child, Command};
 

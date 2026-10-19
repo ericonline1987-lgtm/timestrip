@@ -69,7 +69,7 @@ pub fn run() -> eframe::Result {
         subscription_url: String::new(),
         subscription_error: None,
     };
-    eframe::run_ui_native("TimeStrip Settings", options, move |ui, _frame| app.ui(ui))
+    crate::window::run("TimeStrip Settings", options, move |ui, _frame| app.ui(ui))
 }
 
 const WEIGHT_NAMES: [&str; 9] =
