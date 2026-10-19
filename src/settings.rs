@@ -602,6 +602,43 @@ impl SettingsApp {
     }
 }
 
+fn time_zone_matches<'a>(choices: &[&'a str], query: &str) -> Vec<&'a str> {
+    let query = query.to_lowercase().replace(['_', '/'], " ");
+    let terms: Vec<_> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return choices.to_vec();
+    }
+    let mut matches: Vec<_> = choices.iter().copied().filter_map(|name| {
+        let normalized = name.to_lowercase().replace(['_', '/'], " ");
+        let score = terms.iter().try_fold(0, |score, term| {
+            if normalized.contains(term) {
+                return Some(score);
+            }
+            if term.chars().count() < 3 {
+                return None;
+            }
+            let gaps = normalized.split_whitespace()
+                .filter_map(|word| skipped_letters(word, term)).min()?;
+            Some(score + gaps + 1)
+        })?;
+        Some((score, name))
+    }).collect();
+    matches.sort_by_key(|(score, _)| *score);
+    matches.into_iter().map(|(_, name)| name).collect()
+}
+
+fn skipped_letters(word: &str, query: &str) -> Option<usize> {
+    let mut chars = word.chars().enumerate();
+    let mut first = None;
+    let mut last = 0;
+    for wanted in query.chars() {
+        let (index, _) = chars.find(|(_, ch)| *ch == wanted)?;
+        first.get_or_insert(index);
+        last = index;
+    }
+    Some(last - first? + 1 - query.chars().count())
+}
+
 fn local_clock_ui(ui: &mut egui::Ui, config: &mut Config) {
     egui::Frame::new().fill(ui.visuals().faint_bg_color).corner_radius(10.0).inner_margin(12).show(ui, |ui| {
         ui.set_min_width(ui.available_width());
@@ -620,10 +657,7 @@ fn local_time_zone_ui(ui: &mut egui::Ui, selected: &mut String, choices: &[&str]
             ui.add(egui::TextEdit::singleline(query)
                 .hint_text(t("Search time zones (optional)"))
                 .desired_width(f32::INFINITY));
-            let filter = query.trim().to_lowercase().replace('_', " ");
-            let matches: Vec<_> = choices.iter().copied()
-                .filter(|name| name.to_lowercase().replace('_', " ").contains(&filter))
-                .collect();
+            let matches = time_zone_matches(choices, query);
             if matches.is_empty() {
                 ui.label(weak(t("No matching time zones.")));
             }
@@ -661,10 +695,7 @@ fn add_region_ui(ui: &mut egui::Ui, zones: &mut Vec<Zone>, choices: &[&'static s
                 .desired_width(f32::INFINITY)).changed() {
                 *selected = None;
             }
-            let filter = query.trim().to_lowercase();
-            let matches: Vec<_> = choices.iter().copied()
-                .filter(|name| name.to_lowercase().replace('_', " ").contains(&filter))
-                .collect();
+            let matches = time_zone_matches(choices, query);
             if matches.is_empty() {
                 ui.label(weak(t("No matching time zones.")));
             }
@@ -898,6 +929,84 @@ mod tests {
                 pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
             }], &mut show);
         }
+    }
+
+    #[test]
+    fn time_zone_search_finds_skipped_letters_in_real_iana_names() {
+        let choices = clock::all_zone_names();
+        for query in ["sig", "SIG", "sigapore", "asia/sigapore", " asia   sig ", "sng"] {
+            assert!(time_zone_matches(&choices, query).contains(&"Asia/Singapore"), "query: {query}");
+        }
+        for query in ["new york", "NeW_YoRk", "america/new_york"] {
+            assert!(time_zone_matches(&choices, query).contains(&"America/New_York"), "query: {query}");
+        }
+        assert_eq!(time_zone_matches(&choices, " \t "), choices);
+        assert!(time_zone_matches(&choices, "no such time zone").is_empty());
+        assert!(time_zone_matches(&choices, "新加坡").is_empty());
+    }
+
+    #[test]
+    fn time_zone_search_ranks_literal_and_closer_matches_first() {
+        let choices = ["Asia/Sakhalin", "America/Santiago", "Asia/Singapore", "Asia/Tokyo"];
+        let literal = time_zone_matches(&choices, "sin");
+        assert_eq!(literal[0], "Asia/Singapore");
+        assert!(literal.contains(&"Asia/Sakhalin"));
+        let fuzzy = time_zone_matches(&choices, "sig");
+        assert_eq!(fuzzy, vec!["Asia/Singapore", "America/Santiago"]);
+        assert_eq!(time_zone_matches(&choices, "si"), vec!["Asia/Sakhalin", "Asia/Singapore", "Asia/Tokyo"]);
+    }
+
+    #[test]
+    fn local_picker_finds_sig_without_changing_the_selected_zone() {
+        let ctx = egui::Context::default();
+        let choices = ["America/Santiago", "Asia/Singapore", "America/New_York"];
+        let mut selected = "America/New_York".to_string();
+        let mut query = String::new();
+        let text = frame(&ctx, vec![], |ui| local_time_zone_ui(ui, &mut selected, &choices, &mut query));
+        let picker = text.iter().find(|(label, _)| label == "America/New York").unwrap().1;
+        click(&ctx, picker, |ui| local_time_zone_ui(ui, &mut selected, &choices, &mut query));
+        let text = frame(&ctx, vec![], |ui| local_time_zone_ui(ui, &mut selected, &choices, &mut query));
+        let search = text.iter().find(|(label, _)| label == "Search time zones (optional)").unwrap().1;
+        click(&ctx, search, |ui| local_time_zone_ui(ui, &mut selected, &choices, &mut query));
+        let text = frame(&ctx, vec![egui::Event::Text("sig".into())], |ui| {
+            local_time_zone_ui(ui, &mut selected, &choices, &mut query);
+        });
+        assert_eq!(selected, "America/New_York");
+        let choice = text.iter().find(|(label, _)| label == "Asia/Singapore").unwrap().1;
+        click(&ctx, choice, |ui| local_time_zone_ui(ui, &mut selected, &choices, &mut query));
+        assert_eq!(selected, "Asia/Singapore");
+        assert!(query.is_empty());
+    }
+
+    #[test]
+    fn add_region_picker_finds_sig_and_requires_explicit_confirmation() {
+        let ctx = egui::Context::default();
+        let choices = ["America/Santiago", "Asia/Singapore", "America/New_York"];
+        let mut zones = Vec::new();
+        let mut selected = None;
+        let mut query = String::new();
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let picker = text.iter().find(|(label, _)| label == "Choose a time zone…").unwrap().1;
+        click(&ctx, picker, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let search = text.iter().find(|(label, _)| label == "Search time zones (optional)").unwrap().1;
+        click(&ctx, search, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let text = frame(&ctx, vec![egui::Event::Text("sig".into())], |ui| {
+            add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected);
+        });
+        assert!(zones.is_empty());
+        assert!(selected.is_none());
+        let choice = text.iter().find(|(label, _)| label == "Asia/Singapore").unwrap().1;
+        click(&ctx, choice, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert_eq!(selected, Some("Asia/Singapore"));
+        assert!(zones.is_empty());
+        let text = frame(&ctx, vec![], |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        let add = text.iter().find(|(label, _)| label == "Add region").unwrap().1;
+        click(&ctx, add, |ui| add_region_ui(ui, &mut zones, &choices, &mut query, &mut selected));
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].tz, "Asia/Singapore");
+        assert!(selected.is_none());
+        assert!(query.is_empty());
     }
 
     #[test]
